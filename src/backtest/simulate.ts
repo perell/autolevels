@@ -6,24 +6,10 @@
  */
 import type { Config } from '../core/config';
 import { createState, onEntryBar, onHourClose } from '../core/engine';
-import type { Bar, Bias, Side, Signal, Zone } from '../core/types';
+import { checkExit, closeTrade, type ExitReason, type Trade } from '../core/paper';
+import type { Bar, Bias, Signal, Zone } from '../core/types';
 
-export interface Trade {
-  zoneId: string;
-  side: Side;
-  trigger: Signal['trigger'];
-  score: number;
-  scoreParts: string[];
-  entryTime: number;
-  entry: number;
-  stop: number;
-  target: number;
-  exitTime: number;
-  exit: number;
-  exitReason: 'stop' | 'target' | 'session-end' | 'end-of-data';
-  /** points after spread */
-  points: number;
-}
+export type { Trade } from '../core/paper';
 
 export interface MondayRecord {
   date: string;
@@ -56,7 +42,7 @@ export function runBacktest(hourBars: Bar[], entryBars: Bar[], cfg: Config): Bac
   const mondays: MondayRecord[] = [];
   const biasChanges: BiasRecord[] = [];
   const trades: Trade[] = [];
-  let pos: (Signal & { open: true }) | null = null;
+  let pos: Signal | null = null;
   let h = 0;
 
   const feedHoursUntil = (t: number) => {
@@ -72,24 +58,8 @@ export function runBacktest(hourBars: Bar[], entryBars: Bar[], cfg: Config): Bac
     }
   };
 
-  const close = (time: number, price: number, reason: Trade['exitReason']) => {
-    const p = pos!;
-    const raw = p.side === 'buy' ? price - p.price : p.price - price;
-    trades.push({
-      zoneId: p.zoneId,
-      side: p.side,
-      trigger: p.trigger,
-      score: p.score,
-      scoreParts: p.scoreParts,
-      entryTime: p.time,
-      entry: p.price,
-      stop: p.stop,
-      target: p.target,
-      exitTime: time,
-      exit: price,
-      exitReason: reason,
-      points: raw - cfg.spreadPoints,
-    });
+  const close = (time: number, price: number, reason: ExitReason) => {
+    trades.push(closeTrade(pos!, time, price, reason, cfg));
     pos = null;
   };
 
@@ -99,22 +69,14 @@ export function runBacktest(hourBars: Bar[], entryBars: Bar[], cfg: Config): Bac
 
     // manage an open position with this bar (stop/target are held by the broker)
     if (pos) {
-      const long = pos.side === 'buy';
-      const stopHit = long ? bar.low <= pos.stop : bar.high >= pos.stop;
-      const targetHit = long ? bar.high >= pos.target : bar.low <= pos.target;
-      if (stopHit) {
-        const gap = long ? bar.open < pos.stop : bar.open > pos.stop;
-        close(closeTime, gap ? bar.open : pos.stop, 'stop');
-      } else if (targetHit) {
-        const gap = long ? bar.open > pos.target : bar.open < pos.target;
-        close(closeTime, gap ? bar.open : pos.target, 'target');
-      }
+      const exit = checkExit(pos, bar, cfg);
+      if (exit) close(closeTime, exit.price, exit.reason);
     }
 
     const signals = onEntryBar(state, bar, { positionOpen: pos != null }, cfg);
     for (const s of signals) {
       if (s.kind === 'flat' && pos) close(s.time, s.price, 'session-end');
-      if (s.kind === 'open' && !pos) pos = { ...s, open: true };
+      if (s.kind === 'open' && !pos) pos = s;
     }
   }
   if (pos && entryBars.length) {

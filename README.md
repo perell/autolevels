@@ -1,8 +1,71 @@
-# autolevels — stage 1: zone engine + backtest
+# autolevels
+
+A DE30 (Germany 40) zone strategy in three parts that share one strategy engine (`src/core/`):
+
+| Stage | What | Status |
+| --- | --- | --- |
+| 1 | Backtester for CSV price files + TradingView overlay | done |
+| 2 | Cloudflare agent on IG **demo**, **signals only** (paper trades, no orders) | done — deploy below |
+| 3 | Demo trading (barrier orders) | after the market finder confirms barriers work through IG's API |
+
+## Stage 2: deploy the agent to Cloudflare
+
+The agent wakes 8 seconds after every 3-minute bar closes (every 15 minutes while the market is
+closed), reads IG prices, runs the rules and keeps paper trades with the same exits as the backtest.
+**It never sends orders.** A status page shows zones, Monday levels, bias, paper trades and a log.
+
+### One-time setup (on your own computer)
+
+```bash
+git clone https://github.com/perell/autolevels && cd autolevels
+npm install
+npx wrangler login           # opens the browser to log in to Cloudflare
+npm run deploy               # creates the Worker "autolevels-agent"
+```
+
+Then add the secrets. Each command asks for the value; type or paste it there — **never put them in
+files, in chat or in git**:
+
+```bash
+npx wrangler secret put IG_API_KEY      # IG demo API key (My IG > Settings > API keys)
+npx wrangler secret put IG_USERNAME     # IG demo username
+npx wrangler secret put IG_PASSWORD     # IG demo password
+npx wrangler secret put ADMIN_TOKEN     # your own long random password for the status page
+```
+
+A good `ADMIN_TOKEN`: run `openssl rand -hex 24` (or any 30+ random characters).
+
+### Open the status page
+
+`https://autolevels-agent.<your-subdomain>.workers.dev/?token=<ADMIN_TOKEN>` — `wrangler deploy` prints
+the exact address. The first run loads ~400 hours of history (about 400 IG data points). Bookmark the link.
+
+### Find the right markets (do this first)
+
+1. On the status page click **Market finder**.
+2. Search **Germany 40**. Check that the price market's epic matches `PRICE_EPIC` in `wrangler.toml`
+   (default `IX.D.DAX.IFD.IP`). If not, change it, run `npm run deploy`, then **Reload history**.
+3. Search **Germany 40 Barrier**. Copy the "Full details" box and send it to Claude. It contains
+   market rules only, no login data. This decides how barrier orders are placed in stage 3.
+
+### IG data points
+
+IG allows 10,000 price points a week per account. The agent uses about 4,500 (2–3 points per run),
+plus ~400 at each history reload. **Download history** (status page) gets IG bars as CSV for the
+backtester; it shows the cost first.
+
+### Controls
+
+- **Pause signals** — keeps reading prices, takes no new signals.
+- **Reload history** — rebuilds zones from IG history (after changing rules or the epic).
+- `npm run dev` runs the agent locally (put the secrets in a `.dev.vars` file, which git ignores).
+
+## Stage 1: backtester
 
 Finds the DE30 1h imbalance zones, Monday levels and bias, scores zones, and replays 3-minute bars
 through the entry/exit rules. The engine in `src/core/` is plain TypeScript with a JSON state, so the
-Cloudflare agent (stage 2) will run the exact same code.
+Cloudflare agent runs the exact same code (a test checks that the agent and the backtester produce
+identical trades from the same prices).
 
 ## Rules implemented (from the two Claude Docs)
 
@@ -26,7 +89,7 @@ Every number is in `src/core/config.ts` and can be changed per run with `--set`.
 
 ```bash
 npm install
-npm test                                   # 27 rule tests
+npm test                                   # rule + agent tests
 npm run backtest -- --entry data/DE30_3m.csv --hour data/DE30_1h.csv --out out/real
 npm run backtest -- --entry data/DE30_3m.csv --set minScore=1 --set mondayNoScore=false
 ```
@@ -34,7 +97,11 @@ npm run backtest -- --entry data/DE30_3m.csv --set minScore=1 --set mondayNoScor
 `--hour` is optional (1h bars are built from the 3m file if left out), but a longer 1h file gives
 zones and Monday levels from before the 3m data starts.
 
-## Getting real data from TradingView
+## Getting price data
+
+Without a paid TradingView plan: use **Download history** on the agent's status page (IG prices).
+
+### From TradingView (paid plans)
 
 1. Open DE30EUR (or IG's Germany 40 if your TradingView shows it) on a **3-minute** chart, scroll back
    as far as it loads.

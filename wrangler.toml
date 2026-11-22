@@ -1,0 +1,27 @@
+name = "autolevels-agent"
+main = "src/worker.ts"
+compatibility_date = "2026-11-01"
+
+# Secrets (never commit these; set them with `npx wrangler secret put <NAME>`):
+#   IG_API_KEY, IG_USERNAME, IG_PASSWORD, ADMIN_TOKEN
+
+[vars]
+# "demo" -> demo-api.ig.com, "live" -> api.ig.com
+IG_ENV = "demo"
+# IG market used for prices (the underlying Germany 40). Check it in the market finder.
+PRICE_EPIC = "IX.D.DAX.IFD.IP"
+
+[[durable_objects.bindings]]
+name = "AGENT"
+class_name = "AgentDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["AgentDO"]
+
+[triggers]
+# watchdog: makes sure the agent's own timer is running
+crons = ["*/5 * * * *"]
+
+[observability]
+enabled = true
