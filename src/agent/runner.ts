@@ -216,21 +216,22 @@ export class Runner {
     };
   }
 
-  /** Market finder: search IG and show details needed to pick epics (incl. barriers). */
-  async findMarkets(term: string) {
-    const [acc, found] = await Promise.all([this.ig.accounts(), this.ig.searchMarkets(term)]);
-    const markets = [];
-    for (const m of found.markets.slice(0, 12)) {
-      let details: unknown = null;
-      try {
-        const md = await this.ig.market(m.epic);
-        details = { instrument: md.instrument, dealingRules: md.dealingRules };
-      } catch (e) {
-        details = { error: e instanceof Error ? e.message : String(e) };
-      }
-      markets.push({ ...m, details });
-    }
-    return { accounts: acc.accounts, markets, currentAccountId: this.data.tokens?.accountId ?? null };
+  /**
+   * Market finder: search IG (all hits) and, for one chosen epic, the full market details.
+   * Search results do not depend on the account; details (dealing rules) can.
+   */
+  async findMarkets(term: string, epic?: string) {
+    const [acc, found] = await Promise.all([
+      this.ig.accounts(),
+      term ? this.ig.searchMarkets(term) : Promise.resolve({ markets: [] }),
+    ]);
+    const details = epic ? await this.ig.marketAnyVersion(epic) : null;
+    return {
+      accounts: acc.accounts,
+      markets: found.markets,
+      details: details ? { epic, ...details } : null,
+      currentAccountId: this.data.tokens?.accountId ?? null,
+    };
   }
 
   /** Price history as CSV (mid prices) for the local backtester. Costs IG data points. */

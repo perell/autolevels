@@ -134,10 +134,11 @@ export class AgentDO {
           return back();
 
         case '/markets': {
-          const q = url.searchParams.get('q') ?? '';
-          if (!q) return html(marketsPage('Germany 40 Barrier', null, token));
+          const q = (url.searchParams.get('q') ?? '').trim();
+          const epic = (url.searchParams.get('epic') ?? '').trim();
+          if (!q && !epic) return html(marketsPage('', null, token));
           try {
-            const res = await this.outside((r) => r.findMarkets(q));
+            const res = await this.outside((r) => r.findMarkets(q, epic || undefined));
             return html(marketsPage(q, res, token));
           } catch (e) {
             return html(marketsPage(q, null, token, e instanceof Error ? e.message : String(e)));

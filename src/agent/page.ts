@@ -102,28 +102,72 @@ export function statusPage(s: Status, token: string): string {
 
 export function marketsPage(q: string, r: Markets | null, token: string, error?: string): string {
   const t = encodeURIComponent(token);
+  const link = (epic: string) => `/markets?token=${t}&q=${encodeURIComponent(q)}&epic=${encodeURIComponent(epic)}#details`;
   const accounts = r
     ? `<table><tr><th>Account ID</th><th>Name</th><th>Type</th><th>Preferred</th></tr>${r.accounts
-        .map((a) => `<tr><td>${esc(a.accountId)}</td><td>${esc(a.accountName)}</td><td>${esc(a.accountType)}</td><td>${a.preferred ? 'yes' : ''}</td></tr>`)
+        .map((a) => `<tr><td>${esc(a.accountId)}</td><td>${esc(a.accountName)}</td><td>${esc(a.accountType)}</td><td>${a.preferred ? 'yes (agent uses this)' : ''}</td></tr>`)
         .join('')}</table>`
     : '';
+
+  // plain CFD markets first, then barriers, then options
+  const rank = (type: string) => (type.startsWith('OPT_') ? 2 : type.startsWith('KNOCKOUTS') ? 1 : 0);
+  const sorted = r ? [...r.markets].sort((a, b) => rank(a.instrumentType) - rank(b.instrumentType)) : [];
   const markets = r
-    ? `<table><tr><th>Epic</th><th>Name</th><th>Type</th><th>Expiry</th><th>Status</th><th>Bid / offer</th><th>Min size</th></tr>${r.markets
-        .map((m) => {
-          const rules = (m.details as { dealingRules?: Record<string, { value?: number; unit?: string }> } | null)?.dealingRules;
-          const min = rules?.minDealSize ? `${rules.minDealSize.value} ${rules.minDealSize.unit ?? ''}` : '-';
-          return `<tr><td><b>${esc(m.epic)}</b></td><td>${esc(m.instrumentName)}</td><td>${esc(m.instrumentType)}</td><td>${esc(m.expiry)}</td><td>${esc(m.marketStatus)}</td><td>${f1(m.bid)} / ${f1(m.offer)}</td><td>${esc(min)}</td></tr>`;
-        })
-        .join('')}</table>
-       <h2>Full details (send me this if barriers show up)</h2><pre>${esc(JSON.stringify(r.markets.map((m) => ({ epic: m.epic, name: m.instrumentName, details: m.details })), null, 2))}</pre>`
+    ? sorted.length
+      ? `<p class="muted">${sorted.length} hits. Tap an epic for its details (minimum size, stop rules).</p>
+         <div style="overflow-x:auto"><table><tr><th>Epic</th><th>Name</th><th>Type</th><th>Expiry</th><th>Status</th><th>Bid / offer</th></tr>${sorted
+           .map(
+             (m) =>
+               `<tr><td><a href="${link(m.epic)}"><b>${esc(m.epic)}</b></a></td><td>${esc(m.instrumentName)}</td><td>${esc(m.instrumentType)}</td><td>${esc(m.expiry)}</td><td>${esc(m.marketStatus)}</td><td>${f1(m.bid)} / ${f1(m.offer)}</td></tr>`,
+           )
+           .join('')}</table></div>`
+      : '<p class="muted">No hits.</p>'
     : '';
+
+  let details = '';
+  if (r?.details) {
+    const d = r.details;
+    const errs = d.errors.map((e) => `<li>version ${e.version}: ${esc(e.error)}</li>`).join('');
+    if (d.data) {
+      const ins = d.data.instrument as Record<string, unknown>;
+      const rules = d.data.dealingRules as Record<string, { value?: number; unit?: string } | string | undefined>;
+      const snap = d.data.snapshot as Record<string, unknown>;
+      const rule = (k: string) => {
+        const v = rules?.[k];
+        return v == null ? '-' : typeof v === 'string' ? v : `${v.value} ${v.unit ?? ''}`;
+      };
+      const rows: [string, unknown][] = [
+        ['Name', ins.name],
+        ['Type', ins.type],
+        ['Expiry', ins.expiry],
+        ['Status', snap?.marketStatus],
+        ['Bid / offer', `${snap?.bid ?? '-'} / ${snap?.offer ?? '-'}`],
+        ['Min size', rule('minDealSize')],
+        ['Min normal stop / limit distance', rule('minNormalStopOrLimitDistance')],
+        ['Min guaranteed stop distance', rule('minControlledRiskStopDistance')],
+        ['Guaranteed stops allowed', ins.controlledRiskAllowed],
+        ['Value of one point', `${ins.valueOfOnePip ?? '-'} ${ins.onePipMeans ?? ''}`],
+        ['Contract size', ins.contractSize],
+        ['Currencies', Array.isArray(ins.currencies) ? (ins.currencies as { code: string }[]).map((c) => c.code).join(', ') : '-'],
+        ['Market order allowed', rules?.marketOrderPreference],
+        ['API version that worked', d.version],
+      ];
+      details = `<h2 id="details">Details: ${esc(d.epic)}</h2>
+        <table>${rows.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v ?? '-')}</td></tr>`).join('')}</table>
+        ${errs ? `<p class="warn">Failed first:</p><ul>${errs}</ul>` : ''}
+        <h2>Raw response (send me this)</h2><pre>${esc(JSON.stringify({ epic: d.epic, version: d.version, instrument: ins, dealingRules: rules }, null, 2))}</pre>`;
+    } else {
+      details = `<h2 id="details">Details: ${esc(d.epic)}</h2><p class="error">IG gave no details in any API version:</p><ul>${errs}</ul>`;
+    }
+  }
+
   return page(
     'Market finder',
-    `<h1>Market finder</h1><div class="muted">Searches IG with your login. Searches for "Germany 40" and "Germany 40 Barrier" find the price market and the barriers.</div>
-     <div class="row"><form method="get" action="/markets"><input type="hidden" name="token" value="${esc(token)}"><input type="text" name="q" value="${esc(q)}" placeholder="Germany 40 Barrier"> <button>Search</button></form>
+    `<h1>Market finder</h1><div class="muted">Searches IG with your login. Search results are the same for every account; details can differ per account.</div>
+     <div class="row"><form method="get" action="/markets"><input type="hidden" name="token" value="${esc(token)}"><input type="text" name="q" value="${esc(q)}" placeholder="e.g. Germany 40 Cash"> <button>Search</button></form>
      <a href="/?token=${t}">Back to status</a></div>
      ${error ? `<p class="error">${esc(error)}</p>` : ''}
-     ${r ? `<h2>Your IG accounts</h2>${accounts}<h2>Markets</h2>${markets}` : ''}`,
+     ${r ? `${details}<h2>Markets</h2>${markets}<h2>Your IG accounts</h2>${accounts}` : ''}`,
   );
 }
 

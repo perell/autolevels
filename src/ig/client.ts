@@ -161,12 +161,26 @@ export class IgClient {
     }>('GET', `/markets?searchTerm=${encodeURIComponent(term)}`, 1);
   }
 
-  market(epic: string) {
+  market(epic: string, version = 3) {
     return this.request<{
       instrument: Record<string, unknown> & { epic: string; name: string; type: string };
       dealingRules: Record<string, { unit: string; value: number } | string>;
       snapshot: Record<string, unknown> & { marketStatus: string; bid: number | null; offer: number | null };
-    }>('GET', `/markets/${encodeURIComponent(epic)}`, 3);
+    }>('GET', `/markets/${encodeURIComponent(epic)}`, version);
+  }
+
+  /** Market details, trying API versions 3, 2 and 1 (some instruments fail on newer versions). */
+  async marketAnyVersion(epic: string) {
+    const errors: { version: number; error: string }[] = [];
+    for (const version of [3, 2, 1]) {
+      try {
+        return { version, data: await this.market(epic, version), errors };
+      } catch (e) {
+        if (!(e instanceof IgError)) throw e;
+        errors.push({ version, error: e.message });
+      }
+    }
+    return { version: null, data: null, errors };
   }
 
   /** The newest `max` bars (oldest first). The last one may still be forming. */

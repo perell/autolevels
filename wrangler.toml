@@ -7,7 +7,7 @@ compatibility_date = "2026-11-01"
 
 [vars]
 # "demo" -> demo-api.ig.com, "live" -> api.ig.com
-IG_ENV = "demo"
+IG_ENV = "live"
 # IG market used for prices (the underlying Germany 40). Check it in the market finder.
 PRICE_EPIC = "IX.D.DAX.IFD.IP"
 

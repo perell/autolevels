@@ -81,6 +81,8 @@ function fakeIg(m3: Bar[], h1: Bar[]) {
     }
     if (path === '/accounts') return Response.json({ accounts: [{ accountId: 'ABC123', accountName: 'CFD', accountType: 'CFD', preferred: true }] });
     if (path === '/markets') return Response.json({ markets: [{ epic: 'IX.D.DAX.IFD.IP', instrumentName: 'Germany 40', instrumentType: 'INDICES', expiry: '-', bid: 1, offer: 2, marketStatus: 'TRADEABLE' }] });
+    if (path.startsWith('/markets/') && path.includes('OPN') && headers.Version === '3')
+      return Response.json({ errorCode: 'Transformation failure.' }, { status: 500 });
     if (path.startsWith('/markets/')) return Response.json({ instrument: { epic: 'x', name: 'Germany 40', type: 'INDICES' }, dealingRules: { minDealSize: { unit: 'POINTS', value: 0.5 } }, snapshot: { marketStatus: 'TRADEABLE', bid: 1, offer: 2 } });
     return new Response('{}', { status: 404 });
   }) as typeof fetch;
@@ -204,11 +206,21 @@ describe('agent against a fake IG', () => {
     expect(Math.max(...maxes)).toBeLessThanOrEqual(3);
   });
 
-  it('market finder returns accounts and market details', async () => {
+  it('market finder lists all hits and shows details for one epic', async () => {
     const ig = fakeIg(m3, h1);
     const data = emptyData();
-    const r = await new Runner(data, ig.client(data), opts).findMarkets('Germany 40');
+    const r = await new Runner(data, ig.client(data), opts).findMarkets('Germany 40', 'IX.D.DAX.IFD.IP');
     expect(r.accounts[0].accountId).toBe('ABC123');
-    expect(r.markets[0]).toMatchObject({ epic: 'IX.D.DAX.IFD.IP', details: { dealingRules: { minDealSize: { value: 0.5 } } } });
+    expect(r.markets[0].epic).toBe('IX.D.DAX.IFD.IP');
+    expect(r.details).toMatchObject({ version: 3, data: { dealingRules: { minDealSize: { value: 0.5 } } }, errors: [] });
+  });
+
+  it('falls back to older API versions when version 3 fails', async () => {
+    const ig = fakeIg(m3, h1);
+    const data = emptyData();
+    const r = await new Runner(data, ig.client(data), opts).findMarkets('', 'IX.D.DAX.OPNCALL.IP');
+    expect(r.details?.version).toBe(2);
+    expect(r.details?.errors[0]).toMatchObject({ version: 3 });
+    expect(r.markets).toEqual([]);
   });
 });
