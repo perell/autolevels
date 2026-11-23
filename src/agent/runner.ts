@@ -10,7 +10,7 @@ import { createState, onEntryBar, onHourClose, zonesInReach } from '../core/engi
 import { checkExit, closeTrade, type Trade } from '../core/paper';
 import { scoreZone } from '../core/scoring';
 import { local } from '../core/time';
-import type { Bar, EngineState, Signal } from '../core/types';
+import type { Bar, EngineState, Signal, Zone } from '../core/types';
 import type { IgAllowance, IgClient, IgTokens, Resolution } from '../ig/client';
 import { Trader, type LivePosition, type LiveTrade, type TradeSettings } from './trader';
 
@@ -46,7 +46,16 @@ export interface AgentData {
   live: LivePosition | null;
   liveTrades: LiveTrade[];
   foreign: string | null;
+  // ---- chart history ----
+  /** recent closed 1h bars (oldest first) */
+  hourBars: Bar[];
+  /** every zone seen in the chart window, latest state, by creation */
+  zoneLog: Zone[];
+  mondays: { date: string; high: number; low: number; mid: number; from: number }[];
+  biasLog: { time: number; from: string; to: string; reason: string }[];
 }
+
+const CHART_HOURS = 600;
 
 export function emptyData(): AgentData {
   return {
@@ -69,6 +78,10 @@ export function emptyData(): AgentData {
     live: null,
     liveTrades: [],
     foreign: null,
+    hourBars: [],
+    zoneLog: [],
+    mondays: [],
+    biasLog: [],
   };
 }
 
@@ -140,8 +153,8 @@ export class Runner {
     Object.assign(this.data, emptyData(), keep);
     const hours = (await this.ig.latestBars(this.opt.priceEpic, 'HOUR', this.opt.warmupHours)).filter((b) => b.time + HOUR <= now);
     if (!hours.length) throw new Error(`No 1h prices for ${this.opt.priceEpic}. Check PRICE_EPIC (use the market finder).`);
-    for (const b of hours) onHourClose(this.data.engine, b, this.cfg);
-    this.data.lastHour = hours[hours.length - 1].time;
+    for (const b of hours) this.onHour(b, true);
+    this.syncZones();
     const m3 = (await this.ig.latestBars(this.opt.priceEpic, 'MINUTE_3', 2)).filter((b) => b.time + M3 <= now);
     this.data.last3m = m3.length ? m3[m3.length - 1].time : Math.floor(now / M3) * M3 - M3;
     this.data.initialized = true;
@@ -195,15 +208,7 @@ export class Runner {
     let h = 0;
     const feedHours = (t: number) => {
       while (h < hours.length && hours[h].time + HOUR <= t) {
-        const bar = hours[h++];
-        const ev = onHourClose(d.engine, bar, this.cfg);
-        d.lastHour = bar.time;
-        for (const z of ev.created) this.log('info', `New ${z.side} zone ${z.low.toFixed(1)}-${z.high.toFixed(1)}`, bar.time + HOUR);
-        if (ev.mondayCompleted && d.engine.monday) {
-          const m = d.engine.monday;
-          this.log('info', `Monday levels: high ${m.high.toFixed(1)}, low ${m.low.toFixed(1)}, mid ${m.mid.toFixed(1)}`, bar.time + HOUR);
-        }
-        if (ev.biasChanged) this.log('info', `Bias ${ev.biasChanged.from} -> ${ev.biasChanged.to} (${ev.biasChanged.reason})`, bar.time + HOUR);
+        this.onHour(hours[h++], false);
       }
     };
 
@@ -243,11 +248,74 @@ export class Runner {
       d.last3m = bar.time;
     }
     feedHours(Number.POSITIVE_INFINITY);
+    this.syncZones();
     this.trader?.finishClosed(now);
     if (!bars3.length && missing3 >= 2 && isMarketHours(now, this.cfg.tz)) {
       // no new bar although one should exist: just note it (IG can be a few seconds late)
       this.log('warn', 'No new 3m bar from IG yet', now);
     }
+  }
+
+  /** Feed one closed 1h bar to the engine and keep the chart history. */
+  private onHour(bar: Bar, quiet: boolean) {
+    const d = this.data;
+    // save zones first: the hour update drops zones that died on a 3m bar
+    for (const z of d.engine.zones) this.keepZone(z);
+    const ev = onHourClose(d.engine, bar, this.cfg);
+    d.lastHour = bar.time;
+    d.hourBars.push(bar);
+    if (d.hourBars.length > CHART_HOURS) d.hourBars.splice(0, d.hourBars.length - CHART_HOURS);
+    const at = bar.time + HOUR;
+    for (const z of [...ev.created, ...ev.died, ...ev.expired]) this.keepZone(z);
+    if (!quiet) for (const z of ev.created) this.log('info', `New ${z.side} zone ${z.low.toFixed(1)}-${z.high.toFixed(1)}`, at);
+    if (ev.mondayCompleted && d.engine.monday) {
+      const m = d.engine.monday;
+      d.mondays.push({ date: m.date, high: m.high, low: m.low, mid: m.mid, from: bar.time });
+      if (d.mondays.length > 8) d.mondays.splice(0, d.mondays.length - 8);
+      if (!quiet) this.log('info', `Monday levels: high ${m.high.toFixed(1)}, low ${m.low.toFixed(1)}, mid ${m.mid.toFixed(1)}`, at);
+    }
+    if (ev.biasChanged) {
+      d.biasLog.push({ time: at, ...ev.biasChanged });
+      if (d.biasLog.length > 100) d.biasLog.splice(0, d.biasLog.length - 100);
+      if (!quiet) this.log('info', `Bias ${ev.biasChanged.from} -> ${ev.biasChanged.to} (${ev.biasChanged.reason})`, at);
+    }
+  }
+
+  private keepZone(z: Zone) {
+    const log = this.data.zoneLog;
+    const copy = { ...z };
+    const i = log.findIndex((x) => x.id === z.id);
+    if (i >= 0) log[i] = copy;
+    else log.push(copy);
+  }
+
+  /** Copy the engine's current zones into the chart history and drop zones older than the chart. */
+  private syncZones() {
+    const d = this.data;
+    for (const z of d.engine.zones) this.keepZone(z);
+    const first = d.hourBars[0]?.time ?? 0;
+    d.zoneLog = d.zoneLog.filter((z) => z.createdAt >= first);
+  }
+
+  /** Everything the chart page draws. */
+  chartData() {
+    const d = this.data;
+    return {
+      tz: this.cfg.tz,
+      bars: d.hourBars,
+      zones: d.zoneLog.map((z) => {
+        const open = z.alive && !z.traded && !z.diedAt && !z.expiredAt;
+        return { ...z, score: open ? scoreZone(z, d.engine.monday, d.engine.bias, this.cfg).score : null };
+      }),
+      mondays: d.mondays,
+      bias: d.biasLog,
+      signals: d.signals.slice(-100),
+      paperTrades: d.trades.slice(-100),
+      liveTrades: d.liveTrades.slice(-100),
+      live: d.live,
+      lastPrice: d.engine.lastPrice,
+      rules: { maxZoneWidth: this.cfg.maxZoneWidth, minScore: this.cfg.minScore },
+    };
   }
 
   private closePaper(time: number, price: number, reason: Trade['exitReason']) {

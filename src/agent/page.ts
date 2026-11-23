@@ -142,7 +142,7 @@ export function statusPage(s: Status, token: string): string {
      <div class="row">${s.paused ? action('/api/resume', 'Resume signals', token) : action('/api/pause', 'Pause signals', token)}
        ${action('/api/warmup', 'Reload history', token)}
        ${action('/api/relogin', 'Log in to IG again', token)}
-       <a href="/markets?token=${t}">Market finder</a> · <a href="/history?token=${t}">Download history</a> · <a href="/api/status?token=${t}">JSON</a></div>
+       <a href="/chart?token=${t}"><b>Chart</b></a> · <a href="/markets?token=${t}">Market finder</a> · <a href="/history?token=${t}">Download history</a> · <a href="/api/status?token=${t}">JSON</a></div>
      <div class="cards">${cards}</div>
      <h2>Real trading</h2>${realPanel}
      <h2>Position at IG</h2>${live}

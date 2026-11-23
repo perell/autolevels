@@ -271,6 +271,36 @@ describe('agent against a fake IG', () => {
     expect(ticks).toBeGreaterThan(1000);
   });
 
+  it('keeps chart history that matches the backtester (bars, zones, Monday levels)', async () => {
+    const ig = fakeIg(m3, h1);
+    let data = emptyData();
+    let now = Date.UTC(2026, 8, 28, 6, 0, 8) / 1000;
+    ig.clock.now = now;
+    now = await new Runner(data, ig.client(data), opts).tick(now);
+    const startAfter = data.last3m!;
+    const end = Date.UTC(2026, 9, 16) / 1000;
+    while (now < end) {
+      ig.clock.now = now;
+      data = JSON.parse(JSON.stringify(data));
+      now = await new Runner(data, ig.client(data), opts).tick(now);
+    }
+    const chart = new Runner(data, ig.client(data), opts).chartData();
+    const last = data.lastTick!; // 'now' is already the next scheduled run
+    const closedHours = h1.filter((b) => b.time + 3600 <= last);
+    expect(chart.bars).toEqual(closedHours.slice(-600));
+    const bt = runBacktest(closedHours, m3.filter((b) => b.time > startAfter && b.time + 180 <= last), defaultConfig);
+    const first = chart.bars[0].time;
+    const btZones = bt.zones.filter((z) => z.createdAt >= first);
+    expect(chart.zones.map((z) => z.id).sort()).toEqual(btZones.map((z) => z.id).sort());
+    // a zone's end state matches (filled / expired / still open)
+    for (const z of chart.zones) {
+      const b = btZones.find((x) => x.id === z.id)!;
+      expect([z.alive, z.diedAt ?? null, z.low, z.high]).toEqual([b.alive, b.diedAt ?? null, b.low, b.high]);
+    }
+    expect(chart.mondays.map((m) => [m.date, m.high, m.low])).toEqual(bt.mondays.slice(-8).map((m) => [m.date, m.high, m.low]));
+    expect(chart.zones.some((z) => z.score != null)).toBe(true);
+  });
+
   it('logs in again when the session token expires', async () => {
     const ig = fakeIg(m3, h1);
     const data = emptyData();

@@ -4,6 +4,7 @@
  * closes (every 15 minutes while the market is closed). State is kept in Durable Object storage.
  */
 import { IgClient, type IgCredentials, type Resolution } from '../ig/client';
+import { chartPage } from './chart';
 import { historyPage, marketsPage, statusPage } from './page';
 import { emptyData, Runner, type AgentData } from './runner';
 import type { TradeSettings } from './trader';
@@ -27,7 +28,7 @@ export interface Env {
 }
 
 // stored under separate keys to stay well inside per-value size limits
-const KEYS = ['core', 'trades', 'signals', 'log'] as const;
+const KEYS = ['core', 'trades', 'signals', 'log', 'bars', 'zones'] as const;
 
 export class AgentDO {
   constructor(
@@ -45,13 +46,22 @@ export class AgentDO {
       trades: (got.get('trades') as AgentData['trades']) ?? [],
       signals: (got.get('signals') as AgentData['signals']) ?? [],
       log: (got.get('log') as AgentData['log']) ?? [],
+      hourBars: (got.get('bars') as AgentData['hourBars']) ?? [],
+      zoneLog: (got.get('zones') as AgentData['zoneLog']) ?? [],
     };
   }
 
   private async save(d: AgentData) {
-    const { trades, signals, log, ...core } = d;
+    const { trades, signals, log, hourBars, zoneLog, ...core } = d;
     core.liveTrades = core.liveTrades.slice(-200);
-    await this.ctx.storage.put({ core, trades: trades.slice(-300), signals: signals.slice(-200), log: log.slice(-300) });
+    await this.ctx.storage.put({
+      core,
+      trades: trades.slice(-300),
+      signals: signals.slice(-200),
+      log: log.slice(-300),
+      bars: hourBars,
+      zones: zoneLog.slice(-400),
+    });
   }
 
   private runner(d: AgentData): Runner {
@@ -197,6 +207,12 @@ export class AgentDO {
             return html(marketsPage(q, null, token, e instanceof Error ? e.message : String(e)));
           }
         }
+
+        case '/chart':
+          return html(chartPage(token));
+
+        case '/api/chart':
+          return Response.json(this.runner(await this.load()).chartData());
 
         case '/history':
           return html(historyPage(token));

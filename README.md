@@ -86,6 +86,14 @@ IG allows 10,000 price points a week per account. The agent uses about 4,500 (2â
 plus ~400 at each history reload. **Download history** (status page) gets IG bars as CSV for the
 backtester; it shows the cost first.
 
+### Chart
+
+**Chart** on the status page: 1h candles (last ~4 weeks, stored by the agent, no extra IG data
+points) with the zones the agent found (green buy / red sell boxes with their current score; dashed
+outline = original size, filled part = still unfilled; blue border = traded), Monday high/low/mid lines
+per week, bias changes, paper trades and real trades. Tick "filled / expired zones" to see zones that
+are no longer active. After deploying, press **Reload history** once to fill the chart.
+
 ### Controls
 
 - **Pause signals** â€” keeps reading prices, takes no new signals.
