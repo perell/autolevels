@@ -23,7 +23,8 @@ const STYLE = `
   th,td{padding:6px 8px;border-bottom:1px solid #eef0f3;text-align:left;white-space:nowrap} th{background:#fafbfc;font-weight:600;font-size:12px;color:#4a5263}
   .buy{color:#0a7d55} .sell{color:#c0392b} .warn{color:#b7791f} .error{color:#c0392b} .muted{color:#8a93a5}
   .pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;background:#eef0f3}
-  .on{background:#d8f3e6;color:#0a7d55} .off{background:#fde2e0;color:#c0392b}
+  .on{background:#d8f3e6;color:#0a7d55} .off{background:#fde2e0;color:#c0392b} .real{background:#c0392b;color:#fff;font-weight:700}
+  .panel{background:#fff;border:1px solid #e3e6ec;border-radius:8px;padding:12px;margin-top:8px} .panel.live{border:2px solid #c0392b}
   form{display:inline} button{font:inherit;padding:6px 12px;border-radius:6px;border:1px solid #c9ced8;background:#fff;cursor:pointer}
   input[type=text]{font:inherit;padding:6px 8px;border:1px solid #c9ced8;border-radius:6px;width:260px}
   pre{background:#fff;border:1px solid #e3e6ec;border-radius:8px;padding:10px;overflow:auto;font-size:12px;max-height:300px}
@@ -35,8 +36,11 @@ function page(title: string, body: string, refresh = false) {
 ${refresh ? '<meta http-equiv="refresh" content="60">' : ''}<title>${esc(title)}</title><style>${STYLE}</style></head><body><main>${body}</main></body></html>`;
 }
 
-function action(path: string, label: string, token: string) {
-  return `<form method="post" action="${path}?token=${encodeURIComponent(token)}"><button>${esc(label)}</button></form>`;
+function action(path: string, label: string, token: string, fields: Record<string, string> = {}) {
+  const hidden = Object.entries(fields)
+    .map(([k, v]) => `<input type="hidden" name="${esc(k)}" value="${esc(v)}">`)
+    .join('');
+  return `<form method="post" action="${path}?token=${encodeURIComponent(token)}">${hidden}<button>${esc(label)}</button></form>`;
 }
 
 export function statusPage(s: Status, token: string): string {
@@ -44,7 +48,14 @@ export function statusPage(s: Status, token: string): string {
   const sum = s.summary;
   const m = s.monday;
   const cards = [
-    ['Mode', `<span class="pill ${s.paused ? 'off' : 'on'}">${s.paused ? 'paused' : 'signals only'}</span>`],
+    [
+      'Mode',
+      s.paused
+        ? '<span class="pill off">paused</span>'
+        : s.trading
+          ? '<span class="pill real">REAL TRADING</span>'
+          : '<span class="pill on">signals only</span>',
+    ],
     ['Price', f1(s.lastPrice)],
     ['Bias', `<span class="${s.bias === 'bullish' ? 'buy' : s.bias === 'bearish' ? 'sell' : ''}">${esc(s.bias)}</span>`],
     ['Monday H / L / mid', m?.complete ? `${f1(m.high)} / ${f1(m.low)} / ${f1(m.mid)}` : m ? 'Monday in progress' : '-'],
@@ -88,17 +99,54 @@ export function statusPage(s: Status, token: string): string {
         .join('')}</table>`
     : '<p class="muted">No paper trades yet.</p>';
 
+  const ts = s.tradeSettings;
+  const today = s.today;
+  const realPanel = !s.tradingAvailable
+    ? '<p class="muted">Real trading is not configured (TRADE_EPIC / TRADE_SIZE in wrangler.toml).</p>'
+    : `<div class="panel ${s.trading ? 'live' : ''}">
+        <div class="row"><b>Real trading is ${s.trading ? '<span class="pill real">ON</span>' : '<span class="pill">OFF</span>'}</b>
+        ${
+          s.trading
+            ? action('/api/trading', 'Turn real trading OFF', token, { on: '0' })
+            : `<form method="post" action="/api/trading?token=${t}"><input type="hidden" name="on" value="1">
+               <input type="text" name="confirm" placeholder="type ON" style="width:80px"> <button>Turn real trading ON</button></form>`
+        }</div>
+        <div class="muted">${esc(ts!.epic)} · size ${ts!.size} · stop ${s.rules.stopPoints} pts${ts!.guaranteedStop ? ' (guaranteed)' : ''} · target ${s.rules.stopPoints * s.rules.rewardRisk} pts ·
+        max ${ts!.maxTradesPerDay} trades and ${ts!.maxDailyLossPoints} pts loss per day</div>
+        ${today ? `<div>Today: ${today.opened} trade(s), ${today.points >= 0 ? '+' : ''}${f1(today.points)} pts</div>` : ''}
+        ${s.foreign ? `<p class="warn">${esc(s.foreign)}: the agent will not open new positions until they are closed.</p>` : ''}
+      </div>`;
+
+  const live = s.live
+    ? `<table><tr><th>Side</th><th>Size</th><th>Entry</th><th>Stop</th><th>Target</th><th>Opened</th><th>Deal</th></tr>
+       <tr><td class="${s.live.side}">${s.live.side}</td><td>${s.live.size}</td><td>${f1(s.live.entry)}</td><td>${f1(s.live.stopLevel)}</td><td>${f1(s.live.limitLevel)}</td>
+       <td>${fmt(s.live.openedAt)}</td><td>${esc(s.live.dealId)}</td></tr></table>
+       <div class="row">${action('/api/close-now', 'Close position now', token)}</div>`
+    : '<p class="muted">No open position at IG.</p>';
+
+  const liveTrades = s.liveTrades.length
+    ? `<table><tr><th>Opened</th><th>Side</th><th>Size</th><th>Entry</th><th>Exit</th><th>Reason</th><th>Points</th></tr>${s.liveTrades
+        .map(
+          (x) =>
+            `<tr><td>${fmt(x.openedAt)}</td><td class="${x.side}">${x.side}</td><td>${x.size}</td><td>${f1(x.entry)}</td><td>${f1(x.exit)}${x.estimated ? '*' : ''}</td><td>${x.reason}</td><td class="${(x.points ?? 0) >= 0 ? 'buy' : 'sell'}">${x.points == null ? '?' : f1(x.points)}</td></tr>`,
+        )
+        .join('')}</table><p class="muted">* exit taken from the agent's own prices; IG's statement is the final word.</p>`
+    : '<p class="muted">No real trades yet.</p>';
+
   const log = s.log.map((l) => `<tr><td>${fmt(l.time)}</td><td class="${l.level}">${esc(l.msg)}</td></tr>`).join('');
 
   return page(
     'autolevels agent',
     `<h1>autolevels agent <span class="muted">· ${esc(s.priceEpic)}</span></h1>
-     <div class="muted">Signals only: no orders are sent to IG. Page refreshes every minute.</div>
+     <div class="muted">${s.trading ? 'Real trading is ON: signals become real orders at IG.' : 'Signals only: no orders are sent to IG.'} Page refreshes every minute.</div>
      <div class="row">${s.paused ? action('/api/resume', 'Resume signals', token) : action('/api/pause', 'Pause signals', token)}
        ${action('/api/warmup', 'Reload history', token)}
        ${action('/api/relogin', 'Log in to IG again', token)}
        <a href="/markets?token=${t}">Market finder</a> · <a href="/history?token=${t}">Download history</a> · <a href="/api/status?token=${t}">JSON</a></div>
      <div class="cards">${cards}</div>
+     <h2>Real trading</h2>${realPanel}
+     <h2>Position at IG</h2>${live}
+     <h2>Real trades</h2>${liveTrades}
      <h2>Paper position</h2>${pos}
      <h2>Zones within reach</h2>${zones}
      <h2>Paper trades</h2>${trades}

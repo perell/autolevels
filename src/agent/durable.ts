@@ -6,6 +6,7 @@
 import { IgClient, type IgCredentials, type Resolution } from '../ig/client';
 import { historyPage, marketsPage, statusPage } from './page';
 import { emptyData, Runner, type AgentData } from './runner';
+import type { TradeSettings } from './trader';
 
 export interface Env {
   AGENT: DurableObjectNamespace;
@@ -16,6 +17,12 @@ export interface Env {
   PRICE_EPIC: string;
   /** IG account the agent must use, e.g. EY9UA (empty = preferred account) */
   IG_ACCOUNT_ID?: string;
+  /** real trading: market, size, guaranteed stop, daily caps (all in wrangler.toml) */
+  TRADE_EPIC?: string;
+  TRADE_SIZE?: string;
+  GUARANTEED_STOP?: string;
+  MAX_TRADES_PER_DAY?: string;
+  MAX_DAILY_LOSS_POINTS?: string;
   ADMIN_TOKEN: string;
 }
 
@@ -43,6 +50,7 @@ export class AgentDO {
 
   private async save(d: AgentData) {
     const { trades, signals, log, ...core } = d;
+    core.liveTrades = core.liveTrades.slice(-200);
     await this.ctx.storage.put({ core, trades: trades.slice(-300), signals: signals.slice(-200), log: log.slice(-300) });
   }
 
@@ -57,7 +65,28 @@ export class AgentDO {
     const ig = new IgClient(creds, d.tokens, (t) => {
       d.tokens = t;
     });
-    return new Runner(d, ig, { priceEpic: this.env.PRICE_EPIC, warmupHours: 400, delay: 8, accountId: this.env.IG_ACCOUNT_ID?.trim() || undefined });
+    return new Runner(d, ig, {
+      priceEpic: this.env.PRICE_EPIC,
+      warmupHours: 400,
+      delay: 8,
+      accountId: this.env.IG_ACCOUNT_ID?.trim() || undefined,
+      trade: this.tradeSettings(),
+    });
+  }
+
+  private tradeSettings(): TradeSettings | undefined {
+    const e = this.env;
+    if (!e.TRADE_EPIC?.trim()) return undefined;
+    const num = (v: string | undefined, fallback: number) => (v != null && v.trim() !== '' && Number.isFinite(Number(v)) ? Number(v) : fallback);
+    const size = num(e.TRADE_SIZE, 0);
+    if (!(size > 0)) return undefined;
+    return {
+      epic: e.TRADE_EPIC.trim(),
+      size,
+      guaranteedStop: (e.GUARANTEED_STOP ?? 'true').trim() !== 'false',
+      maxTradesPerDay: num(e.MAX_TRADES_PER_DAY, 3),
+      maxDailyLossPoints: num(e.MAX_DAILY_LOSS_POINTS, 100),
+    };
   }
 
   private async ensureAlarm() {
@@ -129,6 +158,22 @@ export class AgentDO {
             d.paused = url.pathname === '/api/pause';
             r.log('info', d.paused ? 'Signals paused' : 'Signals resumed');
           });
+          return back();
+
+        case '/api/trading': {
+          if (req.method !== 'POST') return new Response('POST only', { status: 405 });
+          const form = await req.formData();
+          const on = form.get('on') === '1';
+          if (on && String(form.get('confirm') ?? '').trim().toUpperCase() !== 'ON') {
+            return new Response('To turn on real trading, type ON in the box. Go back and try again.', { status: 400 });
+          }
+          await this.mutate((r) => r.setTrading(on));
+          return back();
+        }
+
+        case '/api/close-now':
+          if (req.method !== 'POST') return new Response('POST only', { status: 405 });
+          await this.mutate((r) => r.closeNow());
           return back();
 
         case '/api/relogin':

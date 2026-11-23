@@ -5,6 +5,9 @@ import { defaultConfig } from '../src/core/config';
 import type { Bar } from '../src/core/types';
 import { emptyData, isMarketHours, nextRun, Runner } from '../src/agent/runner';
 import { IgClient, toBars } from '../src/ig/client';
+import { local } from '../src/core/time';
+import { Trader, type TradeSettings } from '../src/agent/trader';
+import type { Signal } from '../src/core/types';
 
 /** Seeded synthetic 3m bars, weekdays 00:00-21:00 UTC, with impulses so zones form. */
 function syntheticBars(weeks: number, seed = 11): Bar[] {
@@ -47,6 +50,36 @@ function fakeIg(m3: Bar[], h1: Bar[]) {
   // server-side session account: login lands on the preferred account (BAR1, barriers only)
   let sessionAccount = 'BAR1';
   let switches = 0;
+  // ---- dealing ----
+  type Pos = { dealId: string; dealReference: string; epic: string; direction: 'BUY' | 'SELL'; size: number; level: number; stopLevel: number; limitLevel: number; guaranteed: boolean; openedAt: number; checked: number };
+  const positions: Pos[] = [];
+  const confirms = new Map<string, Record<string, unknown>>();
+  const orders: Record<string, unknown>[] = [];
+  const closedLog: { dealId: string; reason: string; at: number; level: number }[] = [];
+  const deal = { reject: '' as string, dropAnswer: false, nextId: 1, maxOpen: 0 };
+  const lastClosed = () => [...m3].reverse().find((b) => b.time + 180 <= clock.now);
+  const closePos = (p: Pos, level: number, reason: string, at: number) => {
+    positions.splice(positions.indexOf(p), 1);
+    closedLog.push({ dealId: p.dealId, reason, at, level });
+  };
+  // IG holds stops and limits: close positions whose stop/limit was touched by bars since the last check
+  const runStops = () => {
+    for (const p of [...positions]) {
+      for (const b of m3) {
+        if (b.time < p.checked || b.time + 180 > clock.now) continue;
+        p.checked = b.time + 180;
+        const long = p.direction === 'BUY';
+        if (long ? b.low <= p.stopLevel : b.high >= p.stopLevel) {
+          closePos(p, p.stopLevel, 'stop', b.time + 180);
+          break;
+        }
+        if (long ? b.high >= p.limitLevel : b.low <= p.limitLevel) {
+          closePos(p, p.limitLevel, 'limit', b.time + 180);
+          break;
+        }
+      }
+    }
+  };
   const row = (b: Bar) => {
     const side = (v: number) => ({ bid: v - 0.6, ask: v + 0.6, lastTraded: null });
     return {
@@ -73,6 +106,52 @@ function fakeIg(m3: Bar[], h1: Bar[]) {
       });
     }
     if (headers.CST !== validCst) return new Response(JSON.stringify({ errorCode: 'error.security.client-token-invalid' }), { status: 401 });
+    runStops();
+    if (path === '/positions') {
+      return Response.json({
+        positions: positions.map((p) => ({
+          position: { dealId: p.dealId, dealReference: p.dealReference, direction: p.direction, size: p.size, level: p.level, stopLevel: p.stopLevel, limitLevel: p.limitLevel, controlledRisk: p.guaranteed, createdDateUTC: new Date(p.openedAt * 1000).toISOString().slice(0, 19) },
+          market: { epic: p.epic },
+        })),
+      });
+    }
+    if (path === '/positions/otc' && init?.method === 'POST' && headers._method === 'DELETE') {
+      const b = JSON.parse(String(init.body));
+      const p = positions.find((x) => x.dealId === b.dealId);
+      const ref = `CLOSE${deal.nextId++}`;
+      if (!p) confirms.set(ref, { dealStatus: 'REJECTED', reason: 'POSITION_NOT_FOUND' });
+      else {
+        const bar = lastClosed()!;
+        const level = p.direction === 'BUY' ? bar.close - 0.6 : bar.close + 0.6;
+        closePos(p, level, 'closed-by-agent', clock.now);
+        confirms.set(ref, { dealStatus: 'ACCEPTED', reason: 'SUCCESS', dealId: p.dealId, level });
+      }
+      return Response.json({ dealReference: ref });
+    }
+    if (path === '/positions/otc' && init?.method === 'POST') {
+      const b = JSON.parse(String(init.body));
+      orders.push(b);
+      if (deal.reject) {
+        confirms.set(b.dealReference, { dealStatus: 'REJECTED', reason: deal.reject });
+      } else {
+        const bar = lastClosed()!;
+        const level = b.direction === 'BUY' ? bar.close + 0.6 : bar.close - 0.6;
+        const sign = b.direction === 'BUY' ? 1 : -1;
+        const p: Pos = {
+          dealId: `D${deal.nextId++}`, dealReference: b.dealReference, epic: b.epic, direction: b.direction, size: b.size, level,
+          stopLevel: level - sign * b.stopDistance, limitLevel: level + sign * b.limitDistance, guaranteed: b.guaranteedStop, openedAt: clock.now, checked: clock.now,
+        };
+        positions.push(p);
+        deal.maxOpen = Math.max(deal.maxOpen, positions.length);
+        confirms.set(b.dealReference, { dealStatus: 'ACCEPTED', reason: 'SUCCESS', dealId: p.dealId, level, stopLevel: p.stopLevel, limitLevel: p.limitLevel });
+      }
+      if (deal.dropAnswer) throw new TypeError('network connection lost');
+      return Response.json({ dealReference: b.dealReference });
+    }
+    if (path.startsWith('/confirms/')) {
+      const c = confirms.get(decodeURIComponent(path.slice('/confirms/'.length)));
+      return c ? Response.json(c) : Response.json({ errorCode: 'error.confirms.deal-not-found' }, { status: 404 });
+    }
     if (path.startsWith('/prices/')) {
       const res = url.searchParams.get('resolution');
       const max = Number(url.searchParams.get('max'));
@@ -104,12 +183,21 @@ function fakeIg(m3: Bar[], h1: Bar[]) {
     }
     if (path.startsWith('/markets/') && path.includes('OPN') && headers.Version === '3')
       return Response.json({ errorCode: 'Transformation failure.' }, { status: 500 });
-    if (path.startsWith('/markets/')) return Response.json({ instrument: { epic: 'x', name: 'Germany 40', type: 'INDICES' }, dealingRules: { minDealSize: { unit: 'POINTS', value: 0.5 } }, snapshot: { marketStatus: 'TRADEABLE', bid: 1, offer: 2 } });
+    if (path.startsWith('/markets/'))
+      return Response.json({
+        instrument: { epic: 'x', name: 'Germany 40', type: 'INDICES', currencies: [{ code: 'EUR', isDefault: false }] },
+        dealingRules: { minDealSize: { unit: 'POINTS', value: 0.5 }, minControlledRiskStopDistance: { unit: 'POINTS', value: 25 }, minNormalStopOrLimitDistance: { unit: 'POINTS', value: 8 } },
+        snapshot: { marketStatus: 'TRADEABLE', bid: 1, offer: 2 },
+      });
     return new Response('{}', { status: 404 });
   }) as typeof fetch;
   return {
     clock,
     calls,
+    positions,
+    orders,
+    closedLog,
+    deal,
     expire: () => (validCst = 'expired'),
     logins: () => logins,
     switches: () => switches,
@@ -298,5 +386,244 @@ describe('agent against a fake IG', () => {
     await runner.findMarkets('x');
     expect(ig.logins()).toBe(2);
     expect(data.tokens?.accountId).toBe('CFD1');
+  });
+});
+
+describe('real trading against a fake IG that executes orders', () => {
+  const m3 = syntheticBars(10);
+  const h1 = aggregate(m3, 3600);
+  const trade: TradeSettings = { epic: 'IX.D.DAX.IFD.IP', size: 0.5, guaranteedStop: true, maxTradesPerDay: 3, maxDailyLossPoints: 100 };
+
+  /** Run the agent tick by tick, saving/restoring state between ticks like the Durable Object. */
+  async function run(o: { trading?: boolean; trade?: Partial<TradeSettings>; until?: number; setup?: (ig: ReturnType<typeof fakeIg>) => void } = {}) {
+    const ig = fakeIg(m3, h1);
+    o.setup?.(ig);
+    let data = emptyData();
+    const topts = { ...opts, trade: { ...trade, ...o.trade } };
+    let now = Date.UTC(2026, 8, 28, 6, 0, 8) / 1000;
+    ig.clock.now = now;
+    now = await new Runner(data, ig.client(data), topts).tick(now);
+    if (o.trading) data.trading = true;
+    const end = o.until ?? m3[m3.length - 1].time + 600;
+    while (now < end) {
+      ig.clock.now = now;
+      data = JSON.parse(JSON.stringify(data));
+      const r = new Runner(data, ig.client(data), topts);
+      (r.trader as unknown as { sleep: (ms: number) => Promise<void> }).sleep = async () => {};
+      now = await r.tick(now);
+    }
+    return { ig, data };
+  }
+
+  it('sends no orders while the switch is off (the default)', async () => {
+    const { ig, data } = await run();
+    expect(data.trading).toBe(false);
+    expect(data.trades.length).toBeGreaterThan(3); // paper trades happened
+    expect(ig.orders).toEqual([]);
+  });
+
+  it('with the switch on: correct orders, one position at a time, caps and 17:30 close respected', async () => {
+    const { ig, data } = await run({ trading: true });
+    expect(ig.orders.length).toBeGreaterThan(3);
+    for (const o of ig.orders) {
+      expect(o).toMatchObject({ epic: 'IX.D.DAX.IFD.IP', expiry: '-', size: 0.5, orderType: 'MARKET', currencyCode: 'EUR', forceOpen: true, guaranteedStop: true, stopDistance: 30, limitDistance: 90 });
+      expect(String(o.dealReference)).toMatch(/^ALV[a-z0-9]{1,27}$/);
+    }
+    expect(ig.deal.maxOpen).toBe(1);
+    // every position the agent opened is closed, and the agent agrees with IG
+    expect(ig.positions).toHaveLength(0);
+    expect(data.live).toBeNull();
+    expect(data.liveTrades).toHaveLength(ig.orders.length);
+    // nothing left open after 17:30, and no more than 3 orders a day
+    for (const c of ig.closedLog) {
+      const l = local(c.at, 'Europe/Berlin');
+      expect(l.minutes).toBeLessThanOrEqual(17 * 60 + 33);
+    }
+    const perDay = new Map<string, number>();
+    for (const t of data.liveTrades) {
+      const day = local(t.openedAt, 'Europe/Berlin').date;
+      perDay.set(day, (perDay.get(day) ?? 0) + 1);
+    }
+    expect(Math.max(...perDay.values())).toBeLessThanOrEqual(3);
+    // every exit matches what IG did (reason and level), none unknown
+    for (const t of data.liveTrades) {
+      const c = ig.closedLog.find((x) => x.dealId === t.dealId)!;
+      expect(t.exit).toBeCloseTo(c.level, 6);
+      expect({ stop: 'stop', limit: 'target', 'closed-by-agent': 'session-end' }[c.reason]).toBe(t.reason);
+    }
+    expect(data.liveTrades.filter((t) => t.reason === 'stop').length).toBeGreaterThan(0);
+    expect(data.liveTrades.filter((t) => t.reason === 'target').length).toBeGreaterThan(0);
+    // stop/target exits recorded at the IG levels
+    for (const t of data.liveTrades.filter((x) => x.reason === 'stop' || x.reason === 'target')) {
+      expect(Math.abs(t.points!)).toBeCloseTo(t.reason === 'stop' ? 30 : 90, 5);
+    }
+    expect(data.log.filter((l) => l.level === 'error')).toEqual([]);
+  });
+
+  it('respects a lower daily trade limit', async () => {
+    const { data } = await run({ trading: true, trade: { maxTradesPerDay: 1 } });
+    const days = data.liveTrades.map((t) => local(t.openedAt, 'Europe/Berlin').date);
+    expect(new Set(days).size).toBe(days.length);
+  });
+
+  it('refuses a size below IG minimum', async () => {
+    const { ig, data } = await run({ trading: true, trade: { size: 0.01 }, until: Date.UTC(2026, 9, 9) / 1000 });
+    expect(ig.orders).toEqual([]);
+    expect(data.log.some((l) => l.msg.includes('below IG') && l.msg.includes('minimum'))).toBe(true);
+  });
+
+  it('a rejected order opens nothing and is not retried', async () => {
+    const { ig, data } = await run({ trading: true, until: Date.UTC(2026, 9, 9) / 1000, setup: (f) => (f.deal.reject = 'INSUFFICIENT_FUNDS') });
+    expect(ig.orders.length).toBeGreaterThan(0);
+    expect(new Set(ig.orders.map((o) => o.dealReference)).size).toBe(ig.orders.length);
+    expect(data.live).toBeNull();
+    expect(data.log.some((l) => l.msg.includes('INSUFFICIENT_FUNDS'))).toBe(true);
+  });
+
+  it('a lost answer from IG is recovered through the deal confirmation', async () => {
+    const { ig, data } = await run({ trading: true, until: Date.UTC(2026, 9, 9) / 1000, setup: (f) => (f.deal.dropAnswer = true) });
+    expect(ig.orders.length).toBeGreaterThan(0);
+    expect(data.liveTrades.length + (data.live ? 1 : 0)).toBe(ig.orders.length);
+    expect(ig.deal.maxOpen).toBe(1);
+  });
+
+  it('another open position on the market blocks new orders', async () => {
+    const { ig, data } = await run({
+      trading: true,
+      until: Date.UTC(2026, 9, 9) / 1000,
+      setup: (f) =>
+        f.positions.push({ dealId: 'MANUAL1', dealReference: 'MYOWNTRADE', epic: 'IX.D.DAX.IFD.IP', direction: 'BUY', size: 1, level: 1, stopLevel: -1e9, limitLevel: 1e9, guaranteed: false, openedAt: 0, checked: 1e12 }),
+    });
+    expect(ig.orders).toEqual([]);
+    expect(data.foreign).toContain('1 other open position');
+    expect(ig.positions.map((p) => p.dealId)).toEqual(['MANUAL1']); // never touched
+  });
+
+  it("takes over the agent's own position after losing its state", async () => {
+    const ig = fakeIg(m3, h1);
+    const data = emptyData();
+    const now = Date.UTC(2026, 8, 29, 9, 0, 8) / 1000;
+    ig.clock.now = now;
+    ig.positions.push({ dealId: 'D77', dealReference: 'ALVxyz', epic: 'IX.D.DAX.IFD.IP', direction: 'SELL', size: 0.5, level: 24000, stopLevel: 1e9, limitLevel: -1e9, guaranteed: true, openedAt: now - 600, checked: 1e12 });
+    const r = new Runner(data, ig.client(data), { ...opts, trade });
+    await r.tick(now); // warm-up
+    data.trading = true;
+    ig.clock.now = now + 180;
+    await new Runner(data, ig.client(data), { ...opts, trade }).tick(now + 180);
+    expect(data.live).toMatchObject({ dealId: 'D77', side: 'sell', entry: 24000 });
+  });
+
+  it('turning the switch off keeps managing an open position until it closes', async () => {
+    const ig = fakeIg(m3, h1);
+    let data = emptyData();
+    const topts = { ...opts, trade };
+    let now = Date.UTC(2026, 8, 28, 6, 0, 8) / 1000;
+    ig.clock.now = now;
+    now = await new Runner(data, ig.client(data), topts).tick(now);
+    data.trading = true;
+    const end = m3[m3.length - 1].time;
+    while (now < end && !data.live) {
+      ig.clock.now = now;
+      const r = new Runner(data, ig.client(data), topts);
+      (r.trader as unknown as { sleep: (ms: number) => Promise<void> }).sleep = async () => {};
+      now = await r.tick(now);
+    }
+    expect(data.live).not.toBeNull();
+    const ordersSoFar = ig.orders.length;
+    new Runner(data, ig.client(data), topts).setTrading(false);
+    const stopAt = now + 3 * 86400;
+    while (now < stopAt) {
+      ig.clock.now = now;
+      data = JSON.parse(JSON.stringify(data));
+      now = await new Runner(data, ig.client(data), topts).tick(now);
+    }
+    expect(data.live).toBeNull(); // closed by stop/target or at 17:30
+    expect(ig.positions).toHaveLength(0);
+    expect(ig.orders.length).toBe(ordersSoFar); // no new orders
+  });
+});
+
+describe('order safety checks', () => {
+  const m3 = syntheticBars(4);
+  const h1 = aggregate(m3, 3600);
+  const trade: TradeSettings = { epic: 'IX.D.DAX.IFD.IP', size: 0.5, guaranteedStop: true, maxTradesPerDay: 3, maxDailyLossPoints: 100 };
+  const now = Date.UTC(2026, 8, 29, 10, 0, 8) / 1000; // Tue 12:00 Berlin
+  const sig = (over: Partial<Signal> = {}): Signal => ({
+    kind: 'open', side: 'buy', time: now - 8, price: 24000, stop: 23970, target: 24090, zoneId: 'z', score: 2, scoreParts: [], trigger: 'touch', ...over,
+  });
+  function setup(over: Partial<TradeSettings> = {}, cfgOver = {}) {
+    const ig = fakeIg(m3, h1);
+    ig.clock.now = now;
+    const data = emptyData();
+    data.trading = true;
+    const logs: string[] = [];
+    const cfg = { ...defaultConfig, ...cfgOver };
+    const t = new Trader(data, ig.client(data), { ...trade, ...over }, cfg, (_l, m) => logs.push(m), async () => {});
+    return { ig, data, t, logs };
+  }
+  const lost = (openedAt: number, points: number | null) => ({
+    dealId: 'X', side: 'buy' as const, size: 0.5, zoneId: 'z', openedAt, entry: 1, closedAt: openedAt + 60, exit: null, reason: 'stop' as const, points, estimated: true,
+  });
+
+  it('opens when every check passes', async () => {
+    const { t, data, ig } = setup();
+    expect(await t.open(sig(), now)).toBe(true);
+    expect(data.live?.dealId).toBeTruthy();
+    expect(ig.orders).toHaveLength(1);
+  });
+
+  it('does nothing while the switch is off', async () => {
+    const { t, data, ig } = setup();
+    data.trading = false;
+    expect(await t.open(sig(), now)).toBe(false);
+    expect(ig.orders).toHaveLength(0);
+  });
+
+  it('stops after the daily loss limit (unknown results count as a full loss)', async () => {
+    const a = setup();
+    a.data.liveTrades.push(lost(now - 3600, -30), lost(now - 1800, -30), );
+    expect(await a.t.open(sig(), now)).toBe(true); // -60 so far: still allowed
+    const b = setup({ maxTradesPerDay: 10 });
+    b.data.liveTrades.push(lost(now - 3600, -30), lost(now - 2400, -30), lost(now - 1800, -40));
+    expect(await b.t.open(sig(), now)).toBe(false);
+    expect(b.logs.join()).toContain('daily loss limit');
+    const c = setup({ maxTradesPerDay: 10 });
+    c.data.liveTrades.push(lost(now - 3600, null), lost(now - 2400, null), lost(now - 1800, null), lost(now - 1200, null));
+    expect(await c.t.open(sig(), now)).toBe(false); // 4 x -32
+    expect(c.ig.orders).toHaveLength(0);
+  });
+
+  it("yesterday's losses do not count today", async () => {
+    const { t, data } = setup();
+    data.liveTrades.push(lost(now - 86400, -30), lost(now - 86400 + 60, -30), lost(now - 86400 + 120, -60));
+    expect(await t.open(sig(), now)).toBe(true);
+  });
+
+  it('stops after the daily trade limit', async () => {
+    const { t, data, logs } = setup();
+    data.liveTrades.push(lost(now - 3600, 90), lost(now - 2400, 90), lost(now - 1800, 90));
+    expect(await t.open(sig(), now)).toBe(false);
+    expect(logs.join()).toContain('daily limit of 3 trades');
+  });
+
+  it('ignores a stale signal', async () => {
+    const { t, ig, logs } = setup();
+    expect(await t.open(sig({ time: now - 15 * 60 }), now)).toBe(false);
+    expect(ig.orders).toHaveLength(0);
+    expect(logs.join()).toContain('min old');
+  });
+
+  it('refuses a stop closer than IG allows for guaranteed stops', async () => {
+    const { t, ig, logs } = setup({}, { stopPoints: 20 });
+    expect(await t.open(sig(), now)).toBe(false);
+    expect(ig.orders).toHaveLength(0);
+    expect(logs.join()).toContain('closer than IG allows');
+  });
+
+  it('never opens a second position', async () => {
+    const { t, ig } = setup();
+    expect(await t.open(sig(), now)).toBe(true);
+    expect(await t.open(sig({ zoneId: 'other' }), now)).toBe(false);
+    expect(ig.orders).toHaveLength(1);
   });
 });

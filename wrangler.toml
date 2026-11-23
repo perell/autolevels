@@ -9,9 +9,21 @@ compatibility_date = "2026-11-01"
 # "demo" -> demo-api.ig.com, "live" -> api.ig.com
 IG_ENV = "live"
 # IG market used for prices (the underlying Germany 40). Check it in the market finder.
-PRICE_EPIC = "IX.D.DAX.IFD.IP"
+PRICE_EPIC = "IX.D.DAX.INE.IP"
 # IG account the agent always uses (switched to right after login). Empty = the preferred account.
 IG_ACCOUNT_ID = "EY9UA"
+
+# --- Real trading (the switch itself is on the status page, OFF by default) ---
+# Market the agent trades: Germany 40 Cash (EUR 1 per point)
+TRADE_EPIC = "IX.D.DAX.INE.IP"
+# Position size (IG minimum is 0.01 = EUR 0.01 per point)
+TRADE_SIZE = "0.01"
+# Guaranteed stop: loss stops exactly at the stop, IG charges a small premium if it is hit
+GUARANTEED_STOP = "true"
+# No new orders after this many trades in a day ...
+MAX_TRADES_PER_DAY = "3"
+# ... or after losing this many points in a day
+MAX_DAILY_LOSS_POINTS = "100"
 
 [[durable_objects.bindings]]
 name = "AGENT"

@@ -31,6 +31,31 @@ export interface IgAllowance {
 
 export type Resolution = 'MINUTE' | 'MINUTE_2' | 'MINUTE_3' | 'MINUTE_5' | 'MINUTE_10' | 'MINUTE_15' | 'MINUTE_30' | 'HOUR' | 'HOUR_2' | 'HOUR_3' | 'HOUR_4' | 'DAY';
 
+export interface IgPosition {
+  dealId: string;
+  dealReference: string | null;
+  epic: string;
+  direction: 'BUY' | 'SELL';
+  size: number;
+  level: number;
+  stopLevel: number | null;
+  limitLevel: number | null;
+  guaranteed: boolean;
+  createdUTC: string | null;
+}
+
+export interface IgConfirm {
+  dealStatus: 'ACCEPTED' | 'REJECTED' | 'UNKNOWN';
+  reason: string;
+  dealId: string | null;
+  level: number | null;
+  stopLevel: number | null;
+  limitLevel: number | null;
+  profit: number | null;
+  profitCurrency: string | null;
+  affectedDeals: { dealId: string; status: string }[];
+}
+
 export class IgError extends Error {
   constructor(
     public status: number,
@@ -139,7 +164,7 @@ export class IgClient {
   }
 
   /** GET/POST/PUT with automatic login and one re-login on an expired/invalid token. */
-  async request<T>(method: string, path: string, version: number, body?: unknown): Promise<T> {
+  async request<T>(method: string, path: string, version: number, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<T> {
     if (path !== '/session') {
       // every normal call: be logged in, on the right account (shared between parallel calls)
       if (!this.tokens) await this.login();
@@ -148,7 +173,7 @@ export class IgClient {
     for (let attempt = 0; attempt < 2; attempt++) {
       const res = await this.send(path, {
         method,
-        headers: this.headers(version),
+        headers: { ...this.headers(version), ...extraHeaders },
         body: body === undefined ? undefined : JSON.stringify(body),
       });
       if (res.ok) {
@@ -234,6 +259,92 @@ export class IgClient {
       }
     }
     return { version: null, data: null, errors };
+  }
+
+  // ---------- dealing ----------
+
+  /** Open positions on the current account. */
+  async positions(): Promise<IgPosition[]> {
+    const r = await this.request<{ positions: { position: Record<string, unknown>; market: Record<string, unknown> }[] }>('GET', '/positions', 2);
+    return (r.positions ?? []).map(({ position: p, market: m }) => ({
+      dealId: String(p.dealId),
+      dealReference: p.dealReference ? String(p.dealReference) : null,
+      epic: String(m.epic),
+      direction: p.direction as 'BUY' | 'SELL',
+      size: Number(p.size ?? p.dealSize),
+      level: Number(p.level ?? p.openLevel),
+      stopLevel: p.stopLevel == null ? null : Number(p.stopLevel),
+      limitLevel: p.limitLevel == null ? null : Number(p.limitLevel),
+      guaranteed: Boolean(p.controlledRisk),
+      createdUTC: p.createdDateUTC ? String(p.createdDateUTC) : null,
+    }));
+  }
+
+  /** Market order with stop and limit given as distances. Returns IG's deal reference. */
+  async openMarket(o: {
+    epic: string;
+    direction: 'BUY' | 'SELL';
+    size: number;
+    currencyCode: string;
+    stopDistance: number;
+    limitDistance: number;
+    guaranteedStop: boolean;
+    dealReference: string;
+  }): Promise<string> {
+    const r = await this.request<{ dealReference: string }>('POST', '/positions/otc', 2, {
+      epic: o.epic,
+      expiry: '-',
+      direction: o.direction,
+      size: o.size,
+      orderType: 'MARKET',
+      timeInForce: 'FILL_OR_KILL',
+      level: null,
+      quoteId: null,
+      currencyCode: o.currencyCode,
+      forceOpen: true,
+      guaranteedStop: o.guaranteedStop,
+      stopLevel: null,
+      stopDistance: o.stopDistance,
+      limitLevel: null,
+      limitDistance: o.limitDistance,
+      trailingStop: false,
+      trailingStopIncrement: null,
+      dealReference: o.dealReference,
+    });
+    return r.dealReference ?? o.dealReference;
+  }
+
+  /** Close (part of) a position at market. IG wants DELETE with a body, sent as POST + _method header. */
+  async closeMarket(dealId: string, direction: 'BUY' | 'SELL', size: number): Promise<string> {
+    const r = await this.request<{ dealReference: string }>(
+      'POST',
+      '/positions/otc',
+      1,
+      { dealId, epic: null, expiry: null, direction, size, level: null, orderType: 'MARKET', timeInForce: null, quoteId: null },
+      { _method: 'DELETE' },
+    );
+    return r.dealReference;
+  }
+
+  /** Outcome of a deal (accepted/rejected, fill level, ids). Null when IG does not know the reference (yet). */
+  async confirm(dealReference: string): Promise<IgConfirm | null> {
+    try {
+      const c = await this.request<Record<string, unknown>>('GET', `/confirms/${encodeURIComponent(dealReference)}`, 1);
+      return {
+        dealStatus: String(c.dealStatus) as IgConfirm['dealStatus'],
+        reason: String(c.reason ?? ''),
+        dealId: c.dealId ? String(c.dealId) : null,
+        level: c.level == null ? null : Number(c.level),
+        stopLevel: c.stopLevel == null ? null : Number(c.stopLevel),
+        limitLevel: c.limitLevel == null ? null : Number(c.limitLevel),
+        profit: c.profit == null ? null : Number(c.profit),
+        profitCurrency: c.profitCurrency ? String(c.profitCurrency) : null,
+        affectedDeals: (c.affectedDeals as { dealId: string; status: string }[] | undefined) ?? [],
+      };
+    } catch (e) {
+      if (e instanceof IgError && e.status === 404) return null;
+      throw e;
+    }
   }
 
   /** Forget the stored session; the next call logs in again. */

@@ -12,6 +12,7 @@ import { scoreZone } from '../core/scoring';
 import { local } from '../core/time';
 import type { Bar, EngineState, Signal } from '../core/types';
 import type { IgAllowance, IgClient, IgTokens, Resolution } from '../ig/client';
+import { Trader, type LivePosition, type LiveTrade, type TradeSettings } from './trader';
 
 const M3 = 180;
 const HOUR = 3600;
@@ -40,6 +41,11 @@ export interface AgentData {
   allowance: IgAllowance | null;
   tokens: IgTokens | null;
   cfg: Partial<Config>;
+  /** REAL TRADING switch. Off by default; only turned on from the status page. */
+  trading: boolean;
+  live: LivePosition | null;
+  liveTrades: LiveTrade[];
+  foreign: string | null;
 }
 
 export function emptyData(): AgentData {
@@ -59,6 +65,10 @@ export function emptyData(): AgentData {
     allowance: null,
     tokens: null,
     cfg: {},
+    trading: false,
+    live: null,
+    liveTrades: [],
+    foreign: null,
   };
 }
 
@@ -71,6 +81,8 @@ export interface RunnerOptions {
   delay: number;
   /** IG account the agent should be on (for display; the IG client does the switching) */
   accountId?: string;
+  /** real-trading settings; without them the agent can only paper trade */
+  trade?: TradeSettings;
 }
 
 export class Runner {
@@ -81,11 +93,27 @@ export class Runner {
     private opt: RunnerOptions,
   ) {
     this.cfg = withConfig(data.cfg);
+    this.trader = opt.trade ? new Trader(data, ig, opt.trade, this.cfg, (l, m, t) => this.log(l, m, t)) : null;
   }
+
+  trader: Trader | null;
 
   log(level: LogEntry['level'], msg: string, now = Date.now() / 1000) {
     this.data.log.push({ time: Math.floor(now), level, msg });
     if (this.data.log.length > 300) this.data.log.splice(0, this.data.log.length - 300);
+  }
+
+  /** Turn real trading on or off. Turning off leaves an open position (with its IG stop and target) in place. */
+  setTrading(on: boolean) {
+    if (on && !this.trader) throw new Error('Real trading is not configured (TRADE_EPIC missing)');
+    this.data.trading = on;
+    this.log(on ? 'warn' : 'info', on ? 'REAL TRADING ON' : 'Real trading off (an open position keeps its stop and target at IG)');
+  }
+
+  /** Close the agent's open position now. */
+  async closeNow() {
+    if (!this.trader || !this.data.live) return;
+    await this.trader.close('manual', Date.now() / 1000);
   }
 
   /** Throw away the stored IG session; the next call logs in again (and switches account). */
@@ -96,7 +124,19 @@ export class Runner {
 
   /** (Re)load history and rebuild zones, Monday levels and bias. */
   async warmup(now: number) {
-    const keep = { trades: this.data.trades, signals: this.data.signals, log: this.data.log, paused: this.data.paused, tokens: this.data.tokens, cfg: this.data.cfg };
+    const d0 = this.data;
+    const keep = {
+      trades: d0.trades,
+      signals: d0.signals,
+      log: d0.log,
+      paused: d0.paused,
+      tokens: d0.tokens,
+      cfg: d0.cfg,
+      trading: d0.trading,
+      live: d0.live,
+      liveTrades: d0.liveTrades,
+      foreign: d0.foreign,
+    };
     Object.assign(this.data, emptyData(), keep);
     const hours = (await this.ig.latestBars(this.opt.priceEpic, 'HOUR', this.opt.warmupHours)).filter((b) => b.time + HOUR <= now);
     if (!hours.length) throw new Error(`No 1h prices for ${this.opt.priceEpic}. Check PRICE_EPIC (use the market finder).`);
@@ -126,6 +166,17 @@ export class Runner {
   private async step(now: number) {
     const d = this.data;
     const epic = this.opt.priceEpic;
+
+    // real trading: first make sure we agree with IG about open positions
+    let reconciled = false;
+    if (this.trader && (d.trading || d.live)) {
+      try {
+        await this.trader.reconcile(now);
+        reconciled = true;
+      } catch (e) {
+        this.log('error', `Could not read IG positions, no new orders this run: ${e instanceof Error ? e.message : String(e)}`, now);
+      }
+    } else d.foreign = null;
 
     // new closed 3m bars
     const last3 = d.last3m ?? Math.floor(now / M3) * M3 - 2 * M3;
@@ -163,9 +214,14 @@ export class Runner {
         const exit = checkExit(d.paper, bar, this.cfg);
         if (exit) this.closePaper(closeTime, exit.price, exit.reason);
       }
-      const out = onEntryBar(d.engine, bar, { positionOpen: d.paper != null }, this.cfg);
+      this.trader?.trackBar(bar, closeTime);
+      const positionOpen = d.paper != null || d.live != null || d.foreign != null;
+      const out = onEntryBar(d.engine, bar, { positionOpen }, this.cfg);
       for (const s of out) {
-        if (s.kind === 'flat' && d.paper) this.closePaper(s.time, s.price, 'session-end');
+        if (s.kind === 'flat') {
+          if (d.paper) this.closePaper(s.time, s.price, 'session-end');
+          if (d.live && this.trader) await this.trader.close('session-end', now);
+        }
         if (s.kind === 'open' && !d.paper) {
           if (d.paused) {
             this.log('info', `Paused: skipped ${s.side} signal at ${s.price.toFixed(1)}`, closeTime);
@@ -175,11 +231,19 @@ export class Runner {
           d.signals.push(s);
           if (d.signals.length > 300) d.signals.splice(0, d.signals.length - 300);
           this.log('info', `SIGNAL ${s.side.toUpperCase()} ${s.trigger} at ${s.price.toFixed(1)}, stop ${s.stop.toFixed(1)}, target ${s.target.toFixed(1)}, score ${s.score}`, closeTime);
+          if (this.trader && d.trading && reconciled) {
+            try {
+              await this.trader.open(s, now);
+            } catch (e) {
+              this.log('error', `Order failed: ${e instanceof Error ? e.message : String(e)}`, now);
+            }
+          }
         }
       }
       d.last3m = bar.time;
     }
     feedHours(Number.POSITIVE_INFINITY);
+    this.trader?.finishClosed(now);
     if (!bars3.length && missing3 >= 2 && isMarketHours(now, this.cfg.tz)) {
       // no new bar although one should exist: just note it (IG can be a few seconds late)
       this.log('warn', 'No new 3m bar from IG yet', now);
@@ -203,7 +267,14 @@ export class Runner {
       return { ...z, score: s.score, scoreParts: s.parts, width: z.high - z.low };
     });
     return {
-      mode: 'signals-only' as const,
+      mode: (d.trading ? 'real-trading' : 'signals-only') as 'real-trading' | 'signals-only',
+      trading: d.trading,
+      tradingAvailable: this.trader != null,
+      tradeSettings: this.opt.trade ?? null,
+      live: d.live,
+      liveTrades: d.liveTrades.slice(-30).reverse(),
+      today: this.trader ? this.trader.today(Math.floor(Date.now() / 1000)) : null,
+      foreign: d.foreign,
       paused: d.paused,
       initialized: d.initialized,
       priceEpic: this.opt.priceEpic,

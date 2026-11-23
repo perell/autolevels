@@ -6,7 +6,32 @@ A DE30 (Germany 40) zone strategy in three parts that share one strategy engine 
 | --- | --- | --- |
 | 1 | Backtester for CSV price files + TradingView overlay | done |
 | 2 | Cloudflare agent on IG **demo**, **signals only** (paper trades, no orders) | done — deploy below |
-| 3 | Demo trading (barrier orders) | after the market finder confirms barriers work through IG's API |
+| 3 | Real orders on IG (Germany 40 Cash €1, size 0.01) | done — switch is OFF until you turn it on |
+
+## Stage 3: real trading
+
+Settings are in `wrangler.toml` (deployed automatically from GitHub):
+
+| Setting | Now | Meaning |
+| --- | --- | --- |
+| `TRADE_EPIC` | `IX.D.DAX.INE.IP` | Germany 40 Cash (€1 per point at size 1) |
+| `TRADE_SIZE` | `0.01` | €0.01 per point: a 30-point stop risks about €0.30 |
+| `GUARANTEED_STOP` | `true` | loss stops exactly at the stop; IG charges a 2-point premium if hit |
+| `MAX_TRADES_PER_DAY` | `3` | no new orders after this many trades in a day |
+| `MAX_DAILY_LOSS_POINTS` | `100` | no new orders after losing this many points in a day |
+
+**The switch:** on the status page, type `ON` and press *Turn real trading ON*. Off by default.
+
+An order is only sent when all of these hold: switch on, not paused, no position open (the agent's or any
+other on this market), the signal is from the bar that just closed, the daily caps are not reached, IG lists
+the market as TRADEABLE, and the size and stop distance meet IG's minimums. Each order is a market order
+with the stop (30) and target (90) attached, so IG holds them even if the agent is down. At 17:30 the
+agent closes any open position. *Close position now* closes it immediately. Turning the switch off stops
+new orders but keeps managing an open position (stop, target, 17:30) until it is closed.
+
+The agent compares its view with IG's open positions on every run: positions closed by IG are recorded
+with the stop or target level, its own position is picked up again after a restart, and any other position
+on the market blocks new orders (it is never touched).
 
 ## Stage 2: deploy the agent to Cloudflare
 
