@@ -11,6 +11,8 @@ export interface IgCredentials {
   password: string;
   /** 'demo' -> demo-api.ig.com, 'live' -> api.ig.com */
   env: 'demo' | 'live';
+  /** IG account the agent must use (e.g. "EY9UA"). Empty = whatever IG logs in to (the preferred account). */
+  accountId?: string;
 }
 
 export interface IgTokens {
@@ -95,7 +97,20 @@ export class IgClient {
     }
   }
 
-  async login(): Promise<IgTokens> {
+  private pendingLogin: Promise<IgTokens> | null = null;
+  private pendingSwitch: Promise<void> | null = null;
+
+  /** Log in (parallel callers share one login). */
+  login(): Promise<IgTokens> {
+    if (!this.pendingLogin) {
+      this.pendingLogin = this.doLogin().finally(() => {
+        this.pendingLogin = null;
+      });
+    }
+    return this.pendingLogin;
+  }
+
+  private async doLogin(): Promise<IgTokens> {
     const res = await this.send('/session', {
       method: 'POST',
       headers: { ...this.headers(2), CST: '', 'X-SECURITY-TOKEN': '' },
@@ -111,9 +126,25 @@ export class IgClient {
     return this.tokens;
   }
 
+  /** Make sure the session is on the configured account (switches with PUT /session if not). */
+  async ensureAccount() {
+    const want = this.creds.accountId;
+    if (!want || !this.tokens || this.tokens.accountId === want) return;
+    if (!this.pendingSwitch) {
+      this.pendingSwitch = this.switchAccount(want).finally(() => {
+        this.pendingSwitch = null;
+      });
+    }
+    await this.pendingSwitch;
+  }
+
   /** GET/POST/PUT with automatic login and one re-login on an expired/invalid token. */
   async request<T>(method: string, path: string, version: number, body?: unknown): Promise<T> {
-    if (!this.tokens) await this.login();
+    if (path !== '/session') {
+      // every normal call: be logged in, on the right account (shared between parallel calls)
+      if (!this.tokens) await this.login();
+      await this.ensureAccount();
+    }
     for (let attempt = 0; attempt < 2; attempt++) {
       const res = await this.send(path, {
         method,
@@ -121,15 +152,23 @@ export class IgClient {
         body: body === undefined ? undefined : JSON.stringify(body),
       });
       if (res.ok) {
+        // IG may hand out fresh session tokens (e.g. after an account switch)
+        const cst = res.headers.get('CST');
+        const sec = res.headers.get('X-SECURITY-TOKEN');
+        if (this.tokens && (cst || sec)) {
+          this.tokens = { ...this.tokens, cst: cst ?? this.tokens.cst, securityToken: sec ?? this.tokens.securityToken };
+          this.onTokens(this.tokens);
+        }
         const text = await res.text();
         return (text ? JSON.parse(text) : {}) as T;
       }
       const code = await errorCode(res);
       const tokenProblem = res.status === 401 || /token|security/i.test(code);
-      if (attempt === 0 && tokenProblem) {
+      if (attempt === 0 && tokenProblem && path !== '/session') {
         this.tokens = null;
         this.onTokens(null);
         await this.login();
+        await this.ensureAccount();
         continue;
       }
       throw new IgError(res.status, code, path);
@@ -145,10 +184,24 @@ export class IgClient {
     );
   }
 
-  /** Switch the active account, e.g. to the barriers/options account. */
-  async switchAccount(accountId: string) {
+  /** Switch the session to another of your accounts. */
+  async switchAccount(accountId: string, fresh = false): Promise<void> {
     if (this.tokens?.accountId === accountId) return;
-    await this.request('PUT', '/session', 1, { accountId, defaultAccount: false });
+    try {
+      await this.request('PUT', '/session', 1, { accountId, defaultAccount: false });
+    } catch (e) {
+      const stale = e instanceof IgError && (e.status === 401 || /token|security/i.test(e.code));
+      if (stale && !fresh) {
+        // the stored session has expired: log in again (login switches account itself)
+        this.resetSession();
+        await this.login();
+        return this.switchAccount(accountId, true);
+      }
+      // IG answers this when the session is already on that account
+      if (!(e instanceof IgError && /must-be-different/i.test(e.code))) {
+        throw new Error(`Could not switch to IG account ${accountId}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     if (this.tokens) {
       this.tokens.accountId = accountId;
       this.onTokens(this.tokens);
@@ -181,6 +234,12 @@ export class IgClient {
       }
     }
     return { version: null, data: null, errors };
+  }
+
+  /** Forget the stored session; the next call logs in again. */
+  resetSession() {
+    this.tokens = null;
+    this.onTokens(null);
   }
 
   /** The newest `max` bars (oldest first). The last one may still be forming. */

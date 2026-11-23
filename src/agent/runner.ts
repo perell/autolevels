@@ -69,6 +69,8 @@ export interface RunnerOptions {
   warmupHours: number;
   /** seconds after a 3m bar closes before we read it */
   delay: number;
+  /** IG account the agent should be on (for display; the IG client does the switching) */
+  accountId?: string;
 }
 
 export class Runner {
@@ -84,6 +86,12 @@ export class Runner {
   log(level: LogEntry['level'], msg: string, now = Date.now() / 1000) {
     this.data.log.push({ time: Math.floor(now), level, msg });
     if (this.data.log.length > 300) this.data.log.splice(0, this.data.log.length - 300);
+  }
+
+  /** Throw away the stored IG session; the next call logs in again (and switches account). */
+  relogin() {
+    this.ig.resetSession();
+    this.log('info', 'IG session cleared: logging in again on the next call');
   }
 
   /** (Re)load history and rebuild zones, Monday levels and bias. */
@@ -199,6 +207,8 @@ export class Runner {
       paused: d.paused,
       initialized: d.initialized,
       priceEpic: this.opt.priceEpic,
+      account: d.tokens?.accountId ?? null,
+      wantedAccount: this.opt.accountId ?? null,
       lastPrice: e.lastPrice,
       lastTick: d.lastTick,
       nextTick: d.nextTick,
@@ -231,6 +241,7 @@ export class Runner {
       markets: found.markets,
       details: details ? { epic, ...details } : null,
       currentAccountId: this.data.tokens?.accountId ?? null,
+      wantedAccountId: this.opt.accountId ?? null,
     };
   }
 

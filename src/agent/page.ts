@@ -52,6 +52,12 @@ export function statusPage(s: Status, token: string): string {
     ['Paper result', `${sum.totalPoints >= 0 ? '+' : ''}${f1(sum.totalPoints)} pts`],
     ['Last run', fmt(s.lastTick)],
     ['Next run', fmt(s.nextTick)],
+    [
+      'IG account',
+      s.account
+        ? `${esc(s.account)}${s.wantedAccount && s.wantedAccount !== s.account ? ` <span class="error">(should be ${esc(s.wantedAccount)})</span>` : ''}`
+        : `<span class="muted">not logged in yet${s.wantedAccount ? ` (will use ${esc(s.wantedAccount)})` : ''}</span>`,
+    ],
     ['IG data allowance', s.allowance ? `${s.allowance.remainingAllowance} / ${s.allowance.totalAllowance}` : '-'],
   ]
     .map(([k, v]) => `<div class="card"><b>${k}</b><span>${v}</span></div>`)
@@ -90,6 +96,7 @@ export function statusPage(s: Status, token: string): string {
      <div class="muted">Signals only: no orders are sent to IG. Page refreshes every minute.</div>
      <div class="row">${s.paused ? action('/api/resume', 'Resume signals', token) : action('/api/pause', 'Pause signals', token)}
        ${action('/api/warmup', 'Reload history', token)}
+       ${action('/api/relogin', 'Log in to IG again', token)}
        <a href="/markets?token=${t}">Market finder</a> · <a href="/history?token=${t}">Download history</a> · <a href="/api/status?token=${t}">JSON</a></div>
      <div class="cards">${cards}</div>
      <h2>Paper position</h2>${pos}
@@ -104,8 +111,8 @@ export function marketsPage(q: string, r: Markets | null, token: string, error?:
   const t = encodeURIComponent(token);
   const link = (epic: string) => `/markets?token=${t}&q=${encodeURIComponent(q)}&epic=${encodeURIComponent(epic)}#details`;
   const accounts = r
-    ? `<table><tr><th>Account ID</th><th>Name</th><th>Type</th><th>Preferred</th></tr>${r.accounts
-        .map((a) => `<tr><td>${esc(a.accountId)}</td><td>${esc(a.accountName)}</td><td>${esc(a.accountType)}</td><td>${a.preferred ? 'yes (agent uses this)' : ''}</td></tr>`)
+    ? `<table><tr><th>Account ID</th><th>Name</th><th>Type</th><th>Preferred</th><th>Agent</th></tr>${r.accounts
+        .map((a) => `<tr><td>${esc(a.accountId)}</td><td>${esc(a.accountName)}</td><td>${esc(a.accountType)}</td><td>${a.preferred ? 'yes' : ''}</td><td>${a.accountId === r.currentAccountId ? '<b>agent is on this</b>' : ''}</td></tr>`)
         .join('')}</table>`
     : '';
 
@@ -163,11 +170,12 @@ export function marketsPage(q: string, r: Markets | null, token: string, error?:
 
   return page(
     'Market finder',
-    `<h1>Market finder</h1><div class="muted">Searches IG with your login. Search results are the same for every account; details can differ per account.</div>
+    `<h1>Market finder</h1><div class="muted">Searches IG with your login. Search results depend on which IG account the agent is logged in to.</div>
      <div class="row"><form method="get" action="/markets"><input type="hidden" name="token" value="${esc(token)}"><input type="text" name="q" value="${esc(q)}" placeholder="e.g. Germany 40 Cash"> <button>Search</button></form>
      <a href="/?token=${t}">Back to status</a></div>
      ${error ? `<p class="error">${esc(error)}</p>` : ''}
-     ${r ? `${details}<h2>Markets</h2>${markets}<h2>Your IG accounts</h2>${accounts}` : ''}`,
+     ${r ? `<p>Agent session: <b>${esc(r.currentAccountId ?? '-')}</b>${r.wantedAccountId ? ` · IG_ACCOUNT_ID: <b>${esc(r.wantedAccountId)}</b>` : ' · IG_ACCOUNT_ID not set (uses the preferred account)'}</p>
+     ${details}<h2>Markets</h2>${markets}<h2>Your IG accounts</h2>${accounts}` : ''}`,
   );
 }
 

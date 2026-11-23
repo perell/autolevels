@@ -14,6 +14,8 @@ export interface Env {
   IG_PASSWORD: string;
   IG_ENV: string;
   PRICE_EPIC: string;
+  /** IG account the agent must use, e.g. EY9UA (empty = preferred account) */
+  IG_ACCOUNT_ID?: string;
   ADMIN_TOKEN: string;
 }
 
@@ -50,11 +52,12 @@ export class AgentDO {
       username: this.env.IG_USERNAME,
       password: this.env.IG_PASSWORD,
       env: this.env.IG_ENV === 'live' ? 'live' : 'demo',
+      accountId: this.env.IG_ACCOUNT_ID?.trim() || undefined,
     };
     const ig = new IgClient(creds, d.tokens, (t) => {
       d.tokens = t;
     });
-    return new Runner(d, ig, { priceEpic: this.env.PRICE_EPIC, warmupHours: 400, delay: 8 });
+    return new Runner(d, ig, { priceEpic: this.env.PRICE_EPIC, warmupHours: 400, delay: 8, accountId: this.env.IG_ACCOUNT_ID?.trim() || undefined });
   }
 
   private async ensureAlarm() {
@@ -126,6 +129,11 @@ export class AgentDO {
             d.paused = url.pathname === '/api/pause';
             r.log('info', d.paused ? 'Signals paused' : 'Signals resumed');
           });
+          return back();
+
+        case '/api/relogin':
+          if (req.method !== 'POST') return new Response('POST only', { status: 405 });
+          await this.mutate((r) => r.relogin());
           return back();
 
         case '/api/warmup':

@@ -10,6 +10,8 @@ compatibility_date = "2026-11-01"
 IG_ENV = "live"
 # IG market used for prices (the underlying Germany 40). Check it in the market finder.
 PRICE_EPIC = "IX.D.DAX.IFD.IP"
+# IG account the agent always uses (switched to right after login). Empty = the preferred account.
+IG_ACCOUNT_ID = "EY9UA"
 
 [[durable_objects.bindings]]
 name = "AGENT"

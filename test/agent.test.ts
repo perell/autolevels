@@ -44,6 +44,9 @@ function fakeIg(m3: Bar[], h1: Bar[]) {
   const calls: string[] = [];
   let validCst = 'cst-1';
   let logins = 0;
+  // server-side session account: login lands on the preferred account (BAR1, barriers only)
+  let sessionAccount = 'BAR1';
+  let switches = 0;
   const row = (b: Bar) => {
     const side = (v: number) => ({ bid: v - 0.6, ask: v + 0.6, lastTraded: null });
     return {
@@ -63,7 +66,8 @@ function fakeIg(m3: Bar[], h1: Bar[]) {
     if (path === '/session' && init?.method === 'POST') {
       logins++;
       validCst = `cst-${logins}`;
-      return new Response(JSON.stringify({ currentAccountId: 'ABC123' }), {
+      sessionAccount = 'BAR1';
+      return new Response(JSON.stringify({ currentAccountId: 'BAR1' }), {
         status: 200,
         headers: { CST: validCst, 'X-SECURITY-TOKEN': `sec-${logins}` },
       });
@@ -79,8 +83,25 @@ function fakeIg(m3: Bar[], h1: Bar[]) {
         metadata: { allowance: { remainingAllowance: 9000, totalAllowance: 10000, allowanceExpiry: 1000 } },
       });
     }
-    if (path === '/accounts') return Response.json({ accounts: [{ accountId: 'ABC123', accountName: 'CFD', accountType: 'CFD', preferred: true }] });
-    if (path === '/markets') return Response.json({ markets: [{ epic: 'IX.D.DAX.IFD.IP', instrumentName: 'Germany 40', instrumentType: 'INDICES', expiry: '-', bid: 1, offer: 2, marketStatus: 'TRADEABLE' }] });
+    if (path === '/session' && init?.method === 'PUT') {
+      const want = JSON.parse(String(init.body)).accountId;
+      if (want === sessionAccount) return Response.json({ errorCode: 'error.switch.accountId-must-be-different' }, { status: 412 });
+      sessionAccount = want;
+      switches++;
+      return Response.json({ dealingEnabled: true });
+    }
+    if (path === '/accounts')
+      return Response.json({
+        accounts: [
+          { accountId: 'BAR1', accountName: 'Barriers', accountType: 'CFD', preferred: true },
+          { accountId: 'CFD1', accountName: 'Auto', accountType: 'CFD', preferred: false },
+        ],
+      });
+    if (path === '/markets') {
+      const barrier = { epic: 'IX.D.DAX.OPNCALL.IP', instrumentName: 'Germany 40 Barrier Long', instrumentType: 'KNOCKOUTS_INDICES', expiry: 'FEB-27', bid: 1, offer: 2, marketStatus: 'TRADEABLE' };
+      const cash = { epic: 'IX.D.DAX.IFD.IP', instrumentName: 'Germany 40', instrumentType: 'INDICES', expiry: '-', bid: 1, offer: 2, marketStatus: 'TRADEABLE' };
+      return Response.json({ markets: sessionAccount === 'BAR1' ? [barrier] : [cash, barrier] });
+    }
     if (path.startsWith('/markets/') && path.includes('OPN') && headers.Version === '3')
       return Response.json({ errorCode: 'Transformation failure.' }, { status: 500 });
     if (path.startsWith('/markets/')) return Response.json({ instrument: { epic: 'x', name: 'Germany 40', type: 'INDICES' }, dealingRules: { minDealSize: { unit: 'POINTS', value: 0.5 } }, snapshot: { marketStatus: 'TRADEABLE', bid: 1, offer: 2 } });
@@ -91,8 +112,10 @@ function fakeIg(m3: Bar[], h1: Bar[]) {
     calls,
     expire: () => (validCst = 'expired'),
     logins: () => logins,
-    client: (d: ReturnType<typeof emptyData>) =>
-      new IgClient({ apiKey: 'k', username: 'u', password: 'p', env: 'demo' }, d.tokens, (t) => (d.tokens = t), fetchFn),
+    switches: () => switches,
+    sessionAccount: () => sessionAccount,
+    client: (d: ReturnType<typeof emptyData>, accountId = 'CFD1') =>
+      new IgClient({ apiKey: 'k', username: 'u', password: 'p', env: 'demo', accountId }, d.tokens, (t) => (d.tokens = t), fetchFn),
   };
 }
 
@@ -210,7 +233,8 @@ describe('agent against a fake IG', () => {
     const ig = fakeIg(m3, h1);
     const data = emptyData();
     const r = await new Runner(data, ig.client(data), opts).findMarkets('Germany 40', 'IX.D.DAX.IFD.IP');
-    expect(r.accounts[0].accountId).toBe('ABC123');
+    expect(r.accounts.map((a) => a.accountId)).toEqual(['BAR1', 'CFD1']);
+    expect(r.currentAccountId).toBe('CFD1');
     expect(r.markets[0].epic).toBe('IX.D.DAX.IFD.IP');
     expect(r.details).toMatchObject({ version: 3, data: { dealingRules: { minDealSize: { value: 0.5 } } }, errors: [] });
   });
@@ -222,5 +246,57 @@ describe('agent against a fake IG', () => {
     expect(r.details?.version).toBe(2);
     expect(r.details?.errors[0]).toMatchObject({ version: 3 });
     expect(r.markets).toEqual([]);
+  });
+
+  it('switches to IG_ACCOUNT_ID right after login, and only once', async () => {
+    const ig = fakeIg(m3, h1);
+    const data = emptyData();
+    let now = Date.UTC(2026, 8, 28, 9, 0, 8) / 1000;
+    ig.clock.now = now;
+    now = await new Runner(data, ig.client(data), opts).tick(now);
+    expect(ig.sessionAccount()).toBe('CFD1');
+    expect(data.tokens?.accountId).toBe('CFD1');
+    for (let i = 0; i < 5; i++) {
+      ig.clock.now = now;
+      now = await new Runner(data, ig.client(data), opts).tick(now);
+    }
+    expect(ig.switches()).toBe(1);
+    expect(ig.logins()).toBe(1);
+  });
+
+  it('moves a stored session from the wrong account to IG_ACCOUNT_ID', async () => {
+    const ig = fakeIg(m3, h1);
+    const data = emptyData();
+    // first run without an account setting: stays on the preferred (barriers) account
+    const r0 = await new Runner(data, ig.client(data, ''), opts).findMarkets('Germany 40');
+    expect(r0.currentAccountId).toBe('BAR1');
+    expect(r0.markets.map((m) => m.epic)).toEqual(['IX.D.DAX.OPNCALL.IP']);
+    // with IG_ACCOUNT_ID set, the same stored session is switched over, no new login
+    const r1 = await new Runner(data, ig.client(data), opts).findMarkets('Germany 40');
+    expect(r1.currentAccountId).toBe('CFD1');
+    expect(r1.markets[0].epic).toBe('IX.D.DAX.IFD.IP');
+    expect(ig.logins()).toBe(1);
+  });
+
+  it('logs in again when the stored session has expired before a switch', async () => {
+    const ig = fakeIg(m3, h1);
+    const data = emptyData();
+    await new Runner(data, ig.client(data, ''), opts).findMarkets('x'); // session on BAR1
+    ig.expire();
+    const r = await new Runner(data, ig.client(data), opts).findMarkets('Germany 40');
+    expect(r.currentAccountId).toBe('CFD1');
+    expect(ig.logins()).toBe(2);
+  });
+
+  it('"Log in to IG again" clears the session', async () => {
+    const ig = fakeIg(m3, h1);
+    const data = emptyData();
+    const runner = new Runner(data, ig.client(data), opts);
+    await runner.findMarkets('x');
+    runner.relogin();
+    expect(data.tokens).toBeNull();
+    await runner.findMarkets('x');
+    expect(ig.logins()).toBe(2);
+    expect(data.tokens?.accountId).toBe('CFD1');
   });
 });

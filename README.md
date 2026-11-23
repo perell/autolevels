@@ -40,6 +40,13 @@ A good `ADMIN_TOKEN`: run `openssl rand -hex 24` (or any 30+ random characters).
 `https://autolevels-agent.<your-subdomain>.workers.dev/?token=<ADMIN_TOKEN>` — `wrangler deploy` prints
 the exact address. The first run loads ~400 hours of history (about 400 IG data points). Bookmark the link.
 
+### Which IG account
+
+`IG_ACCOUNT_ID` in `wrangler.toml` (now `EY9UA`, the "Auto" CFD account) is the account the agent always
+uses: it switches to it right after logging in, whatever your preferred account is. The status page and
+the market finder show which account the agent is on; **Log in to IG again** clears a stored session.
+IG's market search only returns markets your current account can trade.
+
 ### Find the right markets (do this first)
 
 1. On the status page click **Market finder**.
