@@ -63,7 +63,7 @@ describe('zones on the 1h chart', () => {
     onHourClose(s, bar(MON, 110, 112, 99, 100), cfg); // down
     onHourClose(s, bar(MON + H, 100, 125, 99, 104), cfg); // small up body, no ATR yet
     const ev = onHourClose(s, bar(MON + 2 * H, 130, 141, 120, 125), cfg); // down
-    expect(ev.created).toHaveLength(0);
+    expect(ev.created.filter((z) => z.kind === 'gap')).toHaveLength(0);
   });
 
   it('accepts a big-body middle candle even without a run of 3', () => {
@@ -77,36 +77,43 @@ describe('zones on the 1h chart', () => {
     expect(ev.created[0]).toMatchObject({ side: 'buy', low: 104, high: 110 });
   });
 
-  it('order block: body of the last down candle before 2 up candles = buy zone (no wicks)', () => {
+  it('order block: body of a down candle followed by an up candle = buy zone (no wicks)', () => {
     const s = createState();
-    onHourClose(s, bar(MON, 100, 101, 99, 100.5), cfg); // small up
+    onHourClose(s, bar(MON, 101, 102, 99, 100.5), cfg); // down
     onHourClose(s, bar(MON + H, 100.5, 102, 80, 90), cfg); // DOWN: body 90-100.5, wick to 80
-    onHourClose(s, bar(MON + 2 * H, 90, 96, 89, 95), cfg); // up 1
-    const ev = onHourClose(s, bar(MON + 3 * H, 95, 99, 94, 98), cfg); // up 2 -> order block
+    const ev = onHourClose(s, bar(MON + 2 * H, 90, 96, 89, 95), cfg); // up -> order block
     const ob = ev.created.find((z) => z.kind === 'block');
-    expect(ob).toMatchObject({ side: 'buy', low: 90, high: 100.5, startTime: MON + H, createdAt: MON + 4 * H });
-    // a third up candle does not make it again
-    const ev2 = onHourClose(s, bar(MON + 4 * H, 98, 104, 97, 103), cfg);
+    expect(ob).toMatchObject({ side: 'buy', low: 90, high: 100.5, startTime: MON + H, createdAt: MON + 3 * H });
+    // a second up candle does not make it again
+    const ev2 = onHourClose(s, bar(MON + 3 * H, 95, 99, 94, 98), cfg);
     expect(ev2.created.filter((z) => z.kind === 'block')).toHaveLength(0);
   });
 
-  it('order block: body of the last up candle before 2 down candles = sell zone', () => {
+  it('order block: body of an up candle followed by a down candle = sell zone', () => {
     const s = createState();
-    onHourClose(s, bar(MON, 200, 201, 199, 199.5), cfg); // down
     onHourClose(s, bar(MON + H, 199.5, 230, 199, 210), cfg); // UP: body 199.5-210, wick to 230
-    onHourClose(s, bar(MON + 2 * H, 210, 211, 203, 204), cfg); // down 1
-    const ev = onHourClose(s, bar(MON + 3 * H, 204, 205, 195, 196), cfg); // down 2
+    const ev = onHourClose(s, bar(MON + 2 * H, 210, 211, 203, 204), cfg); // down
     expect(ev.created.find((z) => z.kind === 'block')).toMatchObject({ side: 'sell', low: 199.5, high: 210 });
   });
 
-  it('no order block after a single candle, or when the candle before the run went the same way', () => {
+  it('no order block when the candle before goes the same way or is flat', () => {
     const s = createState();
     onHourClose(s, bar(MON, 100, 106, 99, 105), cfg); // up
-    onHourClose(s, bar(MON + H, 105, 106, 96, 97), cfg); // down 1 only
-    const ev = onHourClose(s, bar(MON + 2 * H, 97, 103, 96, 102), cfg); // up 1
-    expect(ev.created.filter((z) => z.kind === 'block')).toHaveLength(0);
-    const ev2 = onHourClose(s, bar(MON + 3 * H, 102, 104, 101, 103.5), cfg); // up 2: candle before run is down (97)
-    expect(ev2.created.find((z) => z.kind === 'block')).toMatchObject({ side: 'buy', low: 97, high: 105 });
+    const same = onHourClose(s, bar(MON + H, 105, 108, 104, 107), cfg); // up again
+    expect(same.created.filter((z) => z.kind === 'block')).toHaveLength(0);
+    onHourClose(s, bar(MON + 2 * H, 107, 108, 106, 107), cfg); // flat (doji)
+    const afterDoji = onHourClose(s, bar(MON + 3 * H, 107, 109, 106, 108.5), cfg); // up after a doji
+    expect(afterDoji.created.filter((z) => z.kind === 'block')).toHaveLength(0);
+  });
+
+  it('the number of candles is a setting (e.g. 2)', () => {
+    const s = createState();
+    const two = withConfig({ orderBlockRun: 2 });
+    onHourClose(s, bar(MON + H, 100.5, 102, 80, 90), two); // down
+    const one = onHourClose(s, bar(MON + 2 * H, 90, 96, 89, 95), two); // up 1
+    expect(one.created.filter((z) => z.kind === 'block')).toHaveLength(0);
+    const ev = onHourClose(s, bar(MON + 3 * H, 95, 99, 94, 98), two); // up 2
+    expect(ev.created.find((z) => z.kind === 'block')).toMatchObject({ side: 'buy', low: 90, high: 100.5 });
   });
 
   it('order blocks can be switched off', () => {

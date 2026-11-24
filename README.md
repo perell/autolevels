@@ -112,7 +112,7 @@ identical trades from the same prices).
 | Area | Rule |
 | --- | --- |
 | Zone (gap) | 3-candle gap on 1h (candle 1 and 3 do not overlap) |
-| Zone (order block) | body (no wicks) of the last opposite candle before 2 candles in a row one way (`orderBlockRun`) |
+| Zone (order block) | body (no wicks) of a candle followed by a candle the other way (`orderBlockRun` = 1; can be raised) |
 | Strong move | middle candle body >= 1.5 x ATR(14), or part of 3+ candles in a row the same way |
 | Unfilled | partly filled zones shrink to the unfilled part; fully filled = dead |
 | Reach | created within the last 10 trading days (and within 300 pts, for listing) |

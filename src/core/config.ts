@@ -67,7 +67,7 @@ export const defaultConfig: Config = {
   reachDays: 10,
   reachPoints: 300,
   maxZoneWidth: 0,
-  orderBlockRun: 2,
+  orderBlockRun: 1,
   orderBlocks: true,
   minZoneWidth: 0,
 
