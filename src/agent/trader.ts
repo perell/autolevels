@@ -16,6 +16,19 @@ export interface TradeSettings {
   guaranteedStop: boolean;
   maxTradesPerDay: number;
   maxDailyLossPoints: number;
+  /** no new positions after losing this % of the day's starting balance (0 = off) */
+  maxDailyLossPercent: number;
+}
+
+/** Account money as IG reports it, in the account currency. */
+export interface AccountSnapshot {
+  accountId: string;
+  currency: string;
+  balance: number;
+  /** unrealised profit/loss of open positions */
+  profitLoss: number;
+  available: number;
+  at: number;
 }
 
 export interface LivePosition {
@@ -61,6 +74,10 @@ export interface TraderData {
   liveTrades: LiveTrade[];
   /** description of other open positions on the trade market (blocks new orders) */
   foreign: string | null;
+  /** latest account balance from IG */
+  account?: AccountSnapshot | null;
+  /** balance + open P&L at the first reading of the day (local date) */
+  dayStart?: { date: string; equity: number; currency: string } | null;
 }
 
 type Log = (level: 'info' | 'warn' | 'error', msg: string, time?: number) => void;
@@ -91,7 +108,42 @@ export class Trader {
   }
 
   /** Compare with IG's open positions: detect closes done by IG, recover our own, notice others. */
+  /** Read the account balance; the first reading of a day becomes that day's starting point. */
+  async refreshAccount(now: number) {
+    const list = (await this.ig.accounts()).accounts; // logs in / switches account first if needed
+    const id = this.ig.currentAccountId;
+    const acc = list.find((a) => a.accountId === id);
+    if (!acc?.balance) throw new Error(`No balance from IG for account ${id ?? '?'}`);
+    const snap: AccountSnapshot = {
+      accountId: acc.accountId,
+      currency: acc.currency ?? '',
+      balance: acc.balance.balance,
+      profitLoss: acc.balance.profitLoss ?? 0,
+      available: acc.balance.available,
+      at: Math.floor(now),
+    };
+    this.d.account = snap;
+    const date = local(now, this.cfg.tz).date;
+    if (!this.d.dayStart || this.d.dayStart.date !== date) {
+      this.d.dayStart = { date, equity: snap.balance + snap.profitLoss, currency: snap.currency };
+      this.log('info', `Start of day: account ${snap.accountId} ${fmtMoney(this.d.dayStart.equity, snap.currency)}`, now);
+    }
+  }
+
+  /** Today's money result (balance + open P&L vs the day's start), in currency and %. */
+  money() {
+    const a = this.d.account;
+    const ds = this.d.dayStart;
+    if (!a || !ds) return null;
+    const equity = a.balance + a.profitLoss;
+    const change = equity - ds.equity;
+    const pct = ds.equity > 0 ? (change / ds.equity) * 100 : 0;
+    const limit = this.s.maxDailyLossPercent > 0 ? (ds.equity * this.s.maxDailyLossPercent) / 100 : null;
+    return { currency: a.currency, start: ds.equity, equity, change, pct, limit, left: limit == null ? null : limit + change };
+  }
+
   async reconcile(now: number) {
+    await this.refreshAccount(now);
     const onMarket = (await this.ig.positions()).filter((p) => p.epic === this.s.epic);
     const d = this.d;
     if (d.live) {
@@ -153,6 +205,13 @@ export class Trader {
     const t = this.today(now);
     if (t.opened >= this.s.maxTradesPerDay) return skip(`daily limit of ${this.s.maxTradesPerDay} trades reached`);
     if (t.points <= -this.s.maxDailyLossPoints) return skip(`daily loss limit reached (${t.points.toFixed(1)} pts)`);
+    if (this.s.maxDailyLossPercent > 0) {
+      const m = this.money();
+      if (!m) return skip('account balance unknown', 'warn');
+      if (m.pct <= -this.s.maxDailyLossPercent) {
+        return skip(`daily loss limit of ${this.s.maxDailyLossPercent}% reached (${fmtMoney(m.change, m.currency)}, ${m.pct.toFixed(1)}%)`);
+      }
+    }
 
     // market checks
     const m = await this.ig.market(this.s.epic);
@@ -289,3 +348,4 @@ function newRef(): string {
 }
 
 const f1 = (n: number | null | undefined) => (n == null ? '-' : n.toFixed(1));
+export const fmtMoney = (n: number, currency: string) => `${n < 0 ? '-' : ''}${Math.abs(n).toFixed(2)} ${currency}`.trim();

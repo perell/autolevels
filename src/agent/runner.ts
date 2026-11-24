@@ -46,6 +46,8 @@ export interface AgentData {
   live: LivePosition | null;
   liveTrades: LiveTrade[];
   foreign: string | null;
+  account?: import('./trader').AccountSnapshot | null;
+  dayStart?: { date: string; equity: number; currency: string } | null;
   // ---- chart history ----
   /** recent closed 1h bars (oldest first) */
   hourBars: Bar[];
@@ -149,6 +151,8 @@ export class Runner {
       live: d0.live,
       liveTrades: d0.liveTrades,
       foreign: d0.foreign,
+      account: d0.account,
+      dayStart: d0.dayStart,
     };
     Object.assign(this.data, emptyData(), keep);
     const hours = (await this.ig.latestBars(this.opt.priceEpic, 'HOUR', this.opt.warmupHours)).filter((b) => b.time + HOUR <= now);
@@ -347,6 +351,7 @@ export class Runner {
       live: d.live,
       liveTrades: d.liveTrades.slice(-30).reverse(),
       today: this.trader ? this.trader.today(Math.floor(Date.now() / 1000)) : null,
+      money: this.trader ? this.trader.money() : null,
       foreign: d.foreign,
       paused: d.paused,
       initialized: d.initialized,

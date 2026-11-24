@@ -19,6 +19,7 @@ Settings are in `wrangler.toml` (deployed automatically from GitHub):
 | `GUARANTEED_STOP` | `true` | loss stops exactly at the stop; IG charges a 2-point premium if hit |
 | `MAX_TRADES_PER_DAY` | `5` | no new orders after this many trades in a day |
 | `MAX_DAILY_LOSS_POINTS` | `150` | no new orders after losing this many points in a day |
+| `MAX_DAILY_LOSS_PERCENT` | `5` | no new orders after losing this % of the day's starting balance (balance + open P&L as IG reports it, account currency); open positions are left alone |
 
 **The switch:** on the status page, type `ON` and press *Turn real trading ON*. Off by default.
 

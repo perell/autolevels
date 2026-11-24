@@ -201,8 +201,23 @@ export class IgClient {
     throw new IgError(0, 'unreachable', path);
   }
 
+  /** The account the session is on (null before login). */
+  get currentAccountId(): string | null {
+    return this.tokens?.accountId ?? null;
+  }
+
   accounts() {
-    return this.request<{ accounts: { accountId: string; accountName: string; accountType: string; preferred: boolean; status?: string }[] }>(
+    return this.request<{
+      accounts: {
+        accountId: string;
+        accountName: string;
+        accountType: string;
+        preferred: boolean;
+        status?: string;
+        currency?: string;
+        balance?: { balance: number; deposit: number; profitLoss: number; available: number };
+      }[];
+    }>(
       'GET',
       '/accounts',
       1,

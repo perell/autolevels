@@ -24,6 +24,7 @@ export interface Env {
   GUARANTEED_STOP?: string;
   MAX_TRADES_PER_DAY?: string;
   MAX_DAILY_LOSS_POINTS?: string;
+  MAX_DAILY_LOSS_PERCENT?: string;
   ADMIN_TOKEN: string;
 }
 
@@ -96,6 +97,7 @@ export class AgentDO {
       guaranteedStop: (e.GUARANTEED_STOP ?? 'true').trim() !== 'false',
       maxTradesPerDay: num(e.MAX_TRADES_PER_DAY, 3),
       maxDailyLossPoints: num(e.MAX_DAILY_LOSS_POINTS, 100),
+      maxDailyLossPercent: num(e.MAX_DAILY_LOSS_PERCENT, 5),
     };
   }
 

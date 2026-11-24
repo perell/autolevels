@@ -7,6 +7,7 @@ type Markets = Awaited<ReturnType<Runner['findMarkets']>>;
 const esc = (s: unknown) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const f1 = (n: number | null | undefined) => (n == null ? '-' : n.toFixed(1));
+const money = (n: number, cur: string) => `${n < 0 ? '-' : ''}${Math.abs(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${esc(cur)}`;
 const fmt = (t: number | null | undefined) =>
   t == null
     ? '-'
@@ -113,8 +114,15 @@ export function statusPage(s: Status, token: string): string {
                <input type="text" name="confirm" placeholder="type ON" style="width:80px"> <button>Turn real trading ON</button></form>`
         }</div>
         <div class="muted">${esc(ts!.epic)} · size ${ts!.size} · stop ${s.rules.touchStopBeyondZone} pts beyond the zone (comeback: ${s.rules.comebackStopBeyondSweep} beyond the low/high, never under ${s.rules.stopPoints} from entry)${ts!.guaranteedStop ? ', guaranteed' : ''} · target ${s.rules.rewardRisk}× the stop ·
-        max ${ts!.maxTradesPerDay} trades and ${ts!.maxDailyLossPoints} pts loss per day</div>
+        max ${ts!.maxTradesPerDay} trades, ${ts!.maxDailyLossPoints} pts${ts!.maxDailyLossPercent > 0 ? ` or ${ts!.maxDailyLossPercent}% loss` : ''} per day</div>
         ${today ? `<div>Today: ${today.opened} trade(s), ${today.points >= 0 ? '+' : ''}${f1(today.points)} pts</div>` : ''}
+        ${
+          s.money
+            ? `<div>Account: ${money(s.money.equity, s.money.currency)} · today ${s.money.change >= 0 ? '+' : ''}${money(s.money.change, s.money.currency)} (${s.money.pct >= 0 ? '+' : ''}${s.money.pct.toFixed(2)}%)${
+                s.money.left != null ? ` · ${money(Math.max(0, s.money.left), s.money.currency)} left before the ${ts!.maxDailyLossPercent}% limit` : ''
+              }</div>`
+            : '<div class="muted">Account balance: read on the first run with real trading on.</div>'
+        }
         ${s.foreign ? `<p class="warn">${esc(s.foreign)}: the agent will not open new positions until they are closed.</p>` : ''}
       </div>`;
 

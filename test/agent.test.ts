@@ -56,7 +56,7 @@ function fakeIg(m3: Bar[], h1: Bar[]) {
   const confirms = new Map<string, Record<string, unknown>>();
   const orders: Record<string, unknown>[] = [];
   const closedLog: { dealId: string; reason: string; at: number; level: number }[] = [];
-  const deal = { reject: '' as string, dropAnswer: false, nextId: 1, maxOpen: 0 };
+  const deal = { reject: '' as string, dropAnswer: false, nextId: 1, maxOpen: 0, balance: 1000, profitLoss: 0 };
   const lastClosed = () => [...m3].reverse().find((b) => b.time + 180 <= clock.now);
   const closePos = (p: Pos, level: number, reason: string, at: number) => {
     positions.splice(positions.indexOf(p), 1);
@@ -172,8 +172,8 @@ function fakeIg(m3: Bar[], h1: Bar[]) {
     if (path === '/accounts')
       return Response.json({
         accounts: [
-          { accountId: 'BAR1', accountName: 'Barriers', accountType: 'CFD', preferred: true },
-          { accountId: 'CFD1', accountName: 'Auto', accountType: 'CFD', preferred: false },
+          { accountId: 'BAR1', accountName: 'Barriers', accountType: 'CFD', preferred: true, currency: 'NOK', balance: { balance: 50, deposit: 0, profitLoss: 0, available: 50 } },
+          { accountId: 'CFD1', accountName: 'Auto', accountType: 'CFD', preferred: false, currency: 'NOK', balance: { balance: deal.balance, deposit: 0, profitLoss: deal.profitLoss, available: deal.balance } },
         ],
       });
     if (path === '/markets') {
@@ -422,7 +422,7 @@ describe('agent against a fake IG', () => {
 describe('real trading against a fake IG that executes orders', () => {
   const m3 = syntheticBars(10);
   const h1 = aggregate(m3, 3600);
-  const trade: TradeSettings = { epic: 'IX.D.DAX.IFD.IP', size: 0.5, guaranteedStop: true, maxTradesPerDay: 3, maxDailyLossPoints: 100 };
+  const trade: TradeSettings = { epic: 'IX.D.DAX.IFD.IP', size: 0.5, guaranteedStop: true, maxTradesPerDay: 3, maxDailyLossPoints: 100, maxDailyLossPercent: 5 };
 
   /** Run the agent tick by tick, saving/restoring state between ticks like the Durable Object. */
   async function run(o: { trading?: boolean; trade?: Partial<TradeSettings>; until?: number; setup?: (ig: ReturnType<typeof fakeIg>) => void } = {}) {
@@ -578,7 +578,7 @@ describe('real trading against a fake IG that executes orders', () => {
 describe('order safety checks', () => {
   const m3 = syntheticBars(4);
   const h1 = aggregate(m3, 3600);
-  const trade: TradeSettings = { epic: 'IX.D.DAX.IFD.IP', size: 0.5, guaranteedStop: true, maxTradesPerDay: 3, maxDailyLossPoints: 100 };
+  const trade: TradeSettings = { epic: 'IX.D.DAX.IFD.IP', size: 0.5, guaranteedStop: true, maxTradesPerDay: 3, maxDailyLossPoints: 100, maxDailyLossPercent: 5 };
   const now = Date.UTC(2026, 8, 29, 10, 0, 8) / 1000; // Tue 12:00 Berlin
   const sig = (over: Partial<Signal> = {}): Signal => ({
     kind: 'open', side: 'buy', time: now - 8, price: 24000, stop: 23970, target: 24090, zoneId: 'z', score: 2, scoreParts: [], trigger: 'touch', ...over,
@@ -590,6 +590,9 @@ describe('order safety checks', () => {
     data.trading = true;
     const logs: string[] = [];
     const cfg = { ...defaultConfig, ...cfgOver };
+    // balance already read today (the 5% rule has its own tests)
+    data.account = { accountId: 'CFD1', currency: 'NOK', balance: 1000, profitLoss: 0, available: 1000, at: now };
+    data.dayStart = { date: '2026-09-29', equity: 1000, currency: 'NOK' };
     const t = new Trader(data, ig.client(data), { ...trade, ...over }, cfg, (_l, m) => logs.push(m), async () => {});
     return { ig, data, t, logs };
   }
@@ -658,5 +661,71 @@ describe('order safety checks', () => {
     expect(await t.open(sig(), now)).toBe(true);
     expect(await t.open(sig({ zoneId: 'other' }), now)).toBe(false);
     expect(ig.orders).toHaveLength(1);
+  });
+});
+
+describe('daily loss limit in % of the account', () => {
+  const m3 = syntheticBars(4);
+  const h1 = aggregate(m3, 3600);
+  const trade: TradeSettings = { epic: 'IX.D.DAX.IFD.IP', size: 0.5, guaranteedStop: true, maxTradesPerDay: 99, maxDailyLossPoints: 1e9, maxDailyLossPercent: 5 };
+  const now = Date.UTC(2026, 8, 29, 10, 0, 8) / 1000; // Tue 12:00 Berlin
+  const sig = (): Signal => ({ kind: 'open', side: 'buy', time: now - 8, price: 24000, stop: 23960, target: 24120, zoneId: 'z', score: 0, scoreParts: [], trigger: 'touch' });
+  function setup() {
+    const ig = fakeIg(m3, h1);
+    ig.clock.now = now;
+    const data = emptyData();
+    data.trading = true;
+    const logs: string[] = [];
+    const t = new Trader(data, ig.client(data), trade, defaultConfig, (_l, m) => logs.push(m), async () => {});
+    return { ig, data, t, logs };
+  }
+
+  it('reads the balance of the account the agent is on and sets the start of the day', async () => {
+    const { t, data, ig } = setup();
+    ig.deal.balance = 1000;
+    await t.reconcile(now);
+    expect(data.account).toMatchObject({ accountId: 'CFD1', currency: 'NOK', balance: 1000 });
+    expect(data.dayStart).toMatchObject({ date: '2026-09-29', equity: 1000 });
+    ig.deal.balance = 990;
+    await t.reconcile(now + 600);
+    expect(data.dayStart?.equity).toBe(1000); // unchanged during the day
+    expect(t.money()).toMatchObject({ change: -10, pct: -1, limit: 50, left: 40 });
+  });
+
+  it('no new positions after a 5% loss (open P&L counts), open position untouched', async () => {
+    const { t, data, ig, logs } = setup();
+    ig.deal.balance = 1000;
+    await t.reconcile(now);
+    ig.deal.balance = 970;
+    ig.deal.profitLoss = -25; // -5.5% including the open loss
+    await t.reconcile(now + 600);
+    expect(await t.open({ ...sig(), time: now + 592 }, now + 600)).toBe(false);
+    expect(logs.join()).toContain('daily loss limit of 5% reached');
+    expect(ig.orders).toHaveLength(0);
+    // a 4.9% loss is still allowed
+    ig.deal.profitLoss = -19;
+    await t.reconcile(now + 900);
+    expect(await t.open({ ...sig(), time: now + 892 }, now + 900)).toBe(true);
+    void data;
+  });
+
+  it('a new day starts from the new balance', async () => {
+    const { t, data, ig } = setup();
+    ig.deal.balance = 1000;
+    await t.reconcile(now);
+    ig.deal.balance = 900; // -10% today
+    await t.reconcile(now + 600);
+    expect(await t.open({ ...sig(), time: now + 592 }, now + 600)).toBe(false);
+    const tomorrow = now + 86400;
+    ig.clock.now = tomorrow;
+    await t.reconcile(tomorrow);
+    expect(data.dayStart).toMatchObject({ date: '2026-09-30', equity: 900 });
+    expect(await t.open({ ...sig(), time: tomorrow - 8 }, tomorrow)).toBe(true);
+  });
+
+  it('without a balance it opens nothing', async () => {
+    const { t, logs } = setup();
+    expect(await t.open(sig(), now)).toBe(false);
+    expect(logs.join()).toContain('account balance unknown');
   });
 });
