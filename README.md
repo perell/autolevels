@@ -119,6 +119,7 @@ identical trades from the same prices).
 | Monday | high / low / mid, available once Monday has closed |
 | Bias (Tue–Fri) | 1h close above Monday high = bullish, below low = bearish; back inside within 2 candles, or a wick out from inside that closes back in = opposite bias; latest event wins; resets weekly |
 | Score | Monday high/low +2, Monday mid +1, bias direction +1; shown for information, minimum 0 (`minScore`): every zone is traded |
+| Waiting period | a new zone can be traded only after one full 1h candle has closed after it was found (`zoneWaitHours`); touches before that are ignored |
 | Entry | 3m bar touches the zone and does not close through it -> market at the close. Closes through -> entry if a close back comes within 3 bars |
 | Limits | one trade per zone, one position at a time, entries 09:00–17:00 (Berlin/Oslo time), no zone width limit (`maxZoneWidth` 0) |
 | Exit | stop 30 pts from entry, target 90 pts (3:1), flat at 17:30 |

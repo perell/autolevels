@@ -22,6 +22,8 @@ export interface Config {
   orderBlockRun: number;
   /** find order blocks at all */
   orderBlocks: boolean;
+  /** a new zone can be traded only after this many full 1h candles have closed after it was found */
+  zoneWaitHours: number;
   /** ignore tiny gaps narrower than this */
   minZoneWidth: number;
 
@@ -69,6 +71,7 @@ export const defaultConfig: Config = {
   maxZoneWidth: 0,
   orderBlockRun: 1,
   orderBlocks: true,
+  zoneWaitHours: 1,
   minZoneWidth: 0,
 
   mondayProximity: 10,

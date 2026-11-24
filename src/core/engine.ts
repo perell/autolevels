@@ -275,7 +275,8 @@ export function onEntryBar(
   const cands: Cand[] = [];
 
   for (const z of state.zones) {
-    if (!z.alive || z.traded || z.createdAt > bar.time) continue;
+    // a new zone waits `zoneWaitHours` full 1h candles before it can be traded; touches are ignored until then
+    if (!z.alive || z.traded || bar.time < tradeableFrom(z, cfg)) continue;
     const buy = z.side === 'buy';
 
     if (z.reclaimBarsLeft != null) {
@@ -335,6 +336,11 @@ export function onEntryBar(
     }
   }
   return out;
+}
+
+/** First moment (unix s) a zone can be traded. */
+export function tradeableFrom(z: Zone, cfg: Config): number {
+  return z.createdAt + Math.max(0, cfg.zoneWaitHours) * HOUR;
 }
 
 function kill3m(z: Zone, at: number) {

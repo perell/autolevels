@@ -231,6 +231,30 @@ describe('3-minute entries', () => {
     expect(s.zones[0].traded).toBe(true);
   });
 
+  it('a new zone waits one full 1h candle: touches before that are ignored', () => {
+    // zone found at 09:00 UTC (10:00 Berlin): tradeable from 10:00 UTC (11:00 Berlin)
+    const found = TUE + 9 * H;
+    const s = entryState(zone({ createdAt: found, createdDate: '2026-11-17' }));
+    expect(onEntryBar(s, bar(found + 30 * 60, 125, 126, 118, 121), { positionOpen: false }, cfg)).toHaveLength(0);
+    expect(onEntryBar(s, bar(found + H - 180, 125, 126, 118, 121), { positionOpen: false }, cfg)).toHaveLength(0);
+    const [sig] = onEntryBar(s, bar(found + H, 125, 126, 118, 121), { positionOpen: false }, cfg);
+    expect(sig).toMatchObject({ kind: 'open', price: 121 });
+  });
+
+  it('closing through a zone during its waiting hour does not start a reclaim', () => {
+    const found = TUE + 9 * H;
+    const s = entryState(zone({ createdAt: found, createdDate: '2026-11-17' }));
+    onEntryBar(s, bar(found + 30 * 60, 125, 126, 95, 97), { positionOpen: false }, cfg); // closes through, ignored
+    expect(s.zones[0].reclaimBarsLeft).toBeUndefined();
+    expect(onEntryBar(s, bar(found + 33 * 60, 97, 104, 95, 103), { positionOpen: false }, cfg)).toHaveLength(0);
+  });
+
+  it('the waiting period is a setting (0 = trade at once)', () => {
+    const found = TUE + 9 * H;
+    const s = entryState(zone({ createdAt: found, createdDate: '2026-11-17' }));
+    expect(onEntryBar(s, bar(found, 125, 126, 118, 121), { positionOpen: false }, withConfig({ zoneWaitHours: 0 }))).toHaveLength(1);
+  });
+
   it('one trade per zone', () => {
     const s = entryState(zone());
     onEntryBar(s, bar(T10, 125, 126, 118, 121), { positionOpen: false }, cfg);

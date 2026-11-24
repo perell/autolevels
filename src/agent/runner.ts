@@ -6,7 +6,7 @@
 import { summarize } from '../backtest/simulate';
 import { toCsv } from '../backtest/csv';
 import { withConfig, type Config } from '../core/config';
-import { createState, onEntryBar, onHourClose, zonesInReach } from '../core/engine';
+import { createState, onEntryBar, onHourClose, tradeableFrom, zonesInReach } from '../core/engine';
 import { checkExit, closeTrade, type Trade } from '../core/paper';
 import { scoreZone } from '../core/scoring';
 import { local } from '../core/time';
@@ -305,7 +305,11 @@ export class Runner {
       bars: d.hourBars,
       zones: d.zoneLog.map((z) => {
         const open = z.alive && !z.traded && !z.diedAt && !z.expiredAt;
-        return { ...z, score: open ? scoreZone(z, d.engine.monday, d.engine.bias, this.cfg).score : null };
+        return {
+          ...z,
+          score: open ? scoreZone(z, d.engine.monday, d.engine.bias, this.cfg).score : null,
+          tradeableFrom: tradeableFrom(z, this.cfg),
+        };
       }),
       mondays: d.mondays,
       bias: d.biasLog,
@@ -315,6 +319,7 @@ export class Runner {
       live: d.live,
       lastPrice: d.engine.lastPrice,
       rules: { maxZoneWidth: this.cfg.maxZoneWidth, minScore: this.cfg.minScore },
+      now: Math.floor(Date.now() / 1000),
     };
   }
 
@@ -332,7 +337,7 @@ export class Runner {
     const e = d.engine;
     const zones = zonesInReach(e, this.cfg).map((z) => {
       const s = scoreZone(z, e.monday, e.bias, this.cfg);
-      return { ...z, score: s.score, scoreParts: s.parts, width: z.high - z.low };
+      return { ...z, score: s.score, scoreParts: s.parts, width: z.high - z.low, tradeableFrom: tradeableFrom(z, this.cfg) };
     });
     return {
       mode: (d.trading ? 'real-trading' : 'signals-only') as 'real-trading' | 'signals-only',

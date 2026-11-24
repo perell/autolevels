@@ -35,7 +35,7 @@ export function chartPage(token: string): string {
   <span><span class="sw" style="border:2px solid #2457c5"></span>traded zone</span>
   <span><span class="sw" style="background:rgba(120,130,145,.18)"></span>filled / expired</span>
   <span><span class="sw" style="background:#e67e22"></span>Monday high / low (dashed: mid)</span>
-  <span>Numbers on zones: score now. Times: Oslo.</span>
+  <span>Numbers on zones: score now. "waiting": new zone, tradeable after one full 1h candle. Times: Oslo.</span>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
@@ -179,7 +179,8 @@ function draw(d) {
       if (!dead && z.score != null) {
         const tooWide = d.rules.maxZoneWidth > 0 && z.high - z.low > d.rules.maxZoneWidth;
         ctx.fillStyle = buy ? '#0a7d55' : '#c0392b'; ctx.font = 'bold 11px system-ui';
-        const label = (buy ? 'buy ' : 'sell ') + (z.kind === 'block' ? 'block ' : 'gap ') + z.score + (tooWide ? ' (too wide)' : '');
+        const waiting = z.tradeableFrom > d.now;
+        const label = (buy ? 'buy ' : 'sell ') + (z.kind === 'block' ? 'block ' : 'gap ') + z.score + (tooWide ? ' (too wide)' : '') + (waiting ? ' · waiting' : '');
         ctx.fillText(label, Math.min(Math.max(x1, 2), plotW - 90) + 3, (y1 ?? yo1) - 3);
       }
     }
