@@ -13,7 +13,7 @@ import { hm, local, weekKey } from './time';
 import type { Bar, EngineState, FlatSignal, Signal, Zone } from './types';
 
 const HOUR = 3600;
-const RECENT = 5;
+const RECENT = 10;
 
 export function createState(): EngineState {
   return {
@@ -114,7 +114,7 @@ export function onHourClose(state: EngineState, bar: Bar, cfg: Config): HourEven
     }
   }
 
-  // 7. new zone from the last three candles
+  // 7. new zones: gap from the last three candles, order block before a new run
   const n = state.recent.length;
   if (n >= 3) {
     const c1 = state.recent[n - 3];
@@ -131,6 +131,7 @@ export function onHourClose(state: EngineState, bar: Bar, cfg: Config): HourEven
       if (high - low <= 0 || high - low < cfg.minZoneWidth) return;
       const z: Zone = {
         id: `${side}-${c2.bar.time}`,
+        kind: 'gap',
         side,
         low,
         high,
@@ -147,6 +148,38 @@ export function onHourClose(state: EngineState, bar: Bar, cfg: Config): HourEven
     };
     if (c1.bar.high < c3.bar.low && strong(1)) make('buy', c1.bar.high, c3.bar.low);
     if (c1.bar.low > c3.bar.high && strong(-1)) make('sell', c3.bar.high, c1.bar.low);
+  }
+
+  // order block: this candle completes a run of `orderBlockRun` candles one way; the candle just
+  // before the run went the other way. Zone = that candle's body (no wicks).
+  const last = state.recent[n - 1];
+  const N = cfg.orderBlockRun;
+  if (cfg.orderBlocks && last.run === N && n >= N + 1) {
+    const ob = state.recent[n - 1 - N];
+    const runDir = dir(last.bar);
+    if (dir(ob.bar) === -runDir) {
+      const low = Math.min(ob.bar.open, ob.bar.close);
+      const high = Math.max(ob.bar.open, ob.bar.close);
+      if (high - low > 0 && high - low >= cfg.minZoneWidth) {
+        const side = runDir > 0 ? 'buy' : 'sell';
+        const z: Zone = {
+          id: `ob-${side}-${ob.bar.time}`,
+          kind: 'block',
+          side,
+          low,
+          high,
+          origLow: low,
+          origHigh: high,
+          startTime: ob.bar.time,
+          createdAt: bar.time + HOUR,
+          createdDate: lt.date,
+          alive: true,
+          traded: false,
+        };
+        state.zones.push(z);
+        ev.created.push(z);
+      }
+    }
   }
 
   // 8. prune dead zones and zones older than the reach window
@@ -271,7 +304,7 @@ export function onEntryBar(
 
   function eligible(z: Zone, trigger: Cand['trigger']): Cand | null {
     if (!canOpen) return null;
-    if (z.high - z.low > cfg.maxZoneWidth) return null;
+    if (cfg.maxZoneWidth > 0 && z.high - z.low > cfg.maxZoneWidth) return null;
     const s = scoreZone(z, state.monday, state.bias, cfg);
     const needScore = !(isMonday && cfg.mondayNoScore);
     if (needScore && s.score < cfg.minScore) return null;

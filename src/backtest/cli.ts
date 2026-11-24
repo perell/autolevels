@@ -91,6 +91,7 @@ writeFileSync(
   toCsv(
     res.zones.map((z) => ({
       id: z.id,
+      kind: z.kind ?? 'gap',
       side: z.side,
       created: fmt(z.createdAt),
       low: r1(z.origLow),
@@ -108,7 +109,7 @@ writeFileSync(join(o.out, 'overlay.pine'), makePine(res));
 const lines = [
   `DE30 zone strategy backtest`,
   `3m data: ${fmt(res.firstEntryBar!)} -> ${fmt(res.lastEntryBar!)}  (${entryBars.length} bars, ${hourBars.length} 1h bars)`,
-  `Rules: stop ${cfg.stopPoints} pts, target ${cfg.stopPoints * cfg.rewardRisk} pts, min score ${cfg.minScore}, max zone ${cfg.maxZoneWidth} pts, spread ${cfg.spreadPoints} pts`,
+  `Rules: stop ${cfg.stopPoints} pts, target ${cfg.stopPoints * cfg.rewardRisk} pts, min score ${cfg.minScore}, max zone ${cfg.maxZoneWidth > 0 ? `${cfg.maxZoneWidth} pts` : 'no limit'}, order blocks ${cfg.orderBlocks ? `after ${cfg.orderBlockRun} candles` : 'off'}, spread ${cfg.spreadPoints} pts`,
   ``,
   `Zones found: ${res.zones.length}   Weeks with Monday levels: ${res.mondays.length}   Bias changes: ${res.biasChanges.length}`,
   `Trades: ${sum.trades}   Wins: ${sum.wins}   Losses: ${sum.losses}   Win rate: ${(sum.winRate * 100).toFixed(0)}%`,

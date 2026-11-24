@@ -10,9 +10,17 @@ export interface Bar {
 export type Side = 'buy' | 'sell';
 export type Bias = 'bullish' | 'bearish' | 'neutral';
 
-/** An unfilled imbalance zone (3-candle gap) on the 1h chart. */
+/**
+ * A zone on the 1h chart:
+ *  - 'gap':   3-candle imbalance (candle 1 and 3 do not overlap)
+ *  - 'block': order block, the body of the last opposite candle before a run of candles one way
+ */
+export type ZoneKind = 'gap' | 'block';
+
 export interface Zone {
   id: string;
+  /** missing on zones stored before order blocks existed = 'gap' */
+  kind?: ZoneKind;
   /** buy = zone below price (support), sell = zone above price (resistance) */
   side: Side;
   /** current unfilled part */

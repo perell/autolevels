@@ -16,8 +16,12 @@ export interface Config {
   reachDays: number;
   /** only zones whose nearest edge is within this many points of price */
   reachPoints: number;
-  /** skip zones wider than this (stop is fixed from entry) */
+  /** skip zones wider than this; 0 = no limit */
   maxZoneWidth: number;
+  /** order block: the last opposite candle before at least this many candles in a row one way */
+  orderBlockRun: number;
+  /** find order blocks at all */
+  orderBlocks: boolean;
   /** ignore tiny gaps narrower than this */
   minZoneWidth: number;
 
@@ -62,7 +66,9 @@ export const defaultConfig: Config = {
   strongRunLength: 3,
   reachDays: 10,
   reachPoints: 300,
-  maxZoneWidth: 25,
+  maxZoneWidth: 0,
+  orderBlockRun: 2,
+  orderBlocks: true,
   minZoneWidth: 0,
 
   mondayProximity: 10,

@@ -111,7 +111,8 @@ identical trades from the same prices).
 
 | Area | Rule |
 | --- | --- |
-| Zone | 3-candle gap on 1h (candle 1 and 3 do not overlap) |
+| Zone (gap) | 3-candle gap on 1h (candle 1 and 3 do not overlap) |
+| Zone (order block) | body (no wicks) of the last opposite candle before 2 candles in a row one way (`orderBlockRun`) |
 | Strong move | middle candle body >= 1.5 x ATR(14), or part of 3+ candles in a row the same way |
 | Unfilled | partly filled zones shrink to the unfilled part; fully filled = dead |
 | Reach | created within the last 10 trading days (and within 300 pts, for listing) |
@@ -119,7 +120,7 @@ identical trades from the same prices).
 | Bias (Tue–Fri) | 1h close above Monday high = bullish, below low = bearish; back inside within 2 candles, or a wick out from inside that closes back in = opposite bias; latest event wins; resets weekly |
 | Score | Monday high/low +2, Monday mid +1, bias direction +1; minimum 2. Mondays: no score needed |
 | Entry | 3m bar touches the zone and does not close through it -> market at the close. Closes through -> entry if a close back comes within 3 bars |
-| Limits | one trade per zone, one position at a time, entries 09:00–17:00 (Berlin/Oslo time), zones wider than 25 pts skipped |
+| Limits | one trade per zone, one position at a time, entries 09:00–17:00 (Berlin/Oslo time), no zone width limit (`maxZoneWidth` 0) |
 | Exit | stop 30 pts from entry, target 90 pts (3:1), flat at 17:30 |
 | Backtest | stop+target in the same bar = stop; gaps fill at the open; 1.2 pts spread per trade |
 

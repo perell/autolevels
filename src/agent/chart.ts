@@ -31,6 +31,7 @@ export function chartPage(token: string): string {
 <div class="legend">
   <span><span class="sw" style="background:rgba(10,125,85,.25);border:1px solid #0a7d55"></span>buy zone</span>
   <span><span class="sw" style="background:rgba(192,57,43,.22);border:1px solid #c0392b"></span>sell zone</span>
+  <span><span class="sw" style="background:rgba(10,125,85,.22);border:1.5px solid #0a7d55"></span>order block (solid edge)</span>
   <span><span class="sw" style="border:2px solid #2457c5"></span>traded zone</span>
   <span><span class="sw" style="background:rgba(120,130,145,.18)"></span>filled / expired</span>
   <span><span class="sw" style="background:#e67e22"></span>Monday high / low (dashed: mid)</span>
@@ -165,16 +166,20 @@ function draw(d) {
       ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
       ctx.strokeRect(x1, yo1, Math.max(2, x2 - x1), yo2 - yo1);
       ctx.setLineDash([]);
-      // unfilled part: filled box
+      // unfilled part: filled box (order blocks get a solid edge)
       if (y1 != null && y2 != null) {
         ctx.fillStyle = dead ? 'rgba(120,130,145,.16)' : buy ? 'rgba(10,125,85,.22)' : 'rgba(192,57,43,.20)';
         ctx.fillRect(x1, y1, Math.max(2, x2 - x1), y2 - y1);
+        if (z.kind === 'block' && !dead) {
+          ctx.strokeStyle = buy ? '#0a7d55' : '#c0392b'; ctx.lineWidth = 1.2;
+          ctx.strokeRect(x1, y1, Math.max(2, x2 - x1), y2 - y1);
+        }
         if (z.traded) { ctx.strokeStyle = '#2457c5'; ctx.lineWidth = 2; ctx.strokeRect(x1, y1, Math.max(2, x2 - x1), y2 - y1); }
       }
       if (!dead && z.score != null) {
-        const tooWide = z.high - z.low > d.rules.maxZoneWidth;
+        const tooWide = d.rules.maxZoneWidth > 0 && z.high - z.low > d.rules.maxZoneWidth;
         ctx.fillStyle = buy ? '#0a7d55' : '#c0392b'; ctx.font = 'bold 11px system-ui';
-        const label = (buy ? 'buy ' : 'sell ') + z.score + (tooWide ? ' (too wide)' : '');
+        const label = (buy ? 'buy ' : 'sell ') + (z.kind === 'block' ? 'block ' : 'gap ') + z.score + (tooWide ? ' (too wide)' : '');
         ctx.fillText(label, Math.min(Math.max(x1, 2), plotW - 90) + 3, (y1 ?? yo1) - 3);
       }
     }

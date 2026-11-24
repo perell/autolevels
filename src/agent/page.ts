@@ -81,11 +81,11 @@ export function statusPage(s: Status, token: string): string {
     : '<p class="muted">No open paper position.</p>';
 
   const zones = s.zones.length
-    ? `<table><tr><th>Side</th><th>Zone</th><th>Width</th><th>Score</th><th>Created</th><th>Tradeable now</th></tr>${s.zones
+    ? `<table><tr><th>Side</th><th>Type</th><th>Zone</th><th>Width</th><th>Score</th><th>Created</th><th>Tradeable now</th></tr>${s.zones
         .sort((a, b) => b.high - a.high)
         .map((z) => {
-          const ok = z.width <= s.rules.maxZoneWidth;
-          return `<tr><td class="${z.side}">${z.side}</td><td>${f1(z.low)} - ${f1(z.high)}</td><td>${f1(z.width)}</td><td>${z.score} <span class="muted">${esc(z.scoreParts.join(' '))}</span></td><td>${fmt(z.createdAt)}</td><td>${ok ? (z.score >= s.rules.minScore ? 'yes' : 'Mondays only') : '<span class="muted">too wide</span>'}</td></tr>`;
+          const ok = !(s.rules.maxZoneWidth > 0) || z.width <= s.rules.maxZoneWidth;
+          return `<tr><td class="${z.side}">${z.side}</td><td>${z.kind === 'block' ? 'order block' : 'gap'}</td><td>${f1(z.low)} - ${f1(z.high)}</td><td>${f1(z.width)}</td><td>${z.score} <span class="muted">${esc(z.scoreParts.join(' '))}</span></td><td>${fmt(z.createdAt)}</td><td>${ok ? (z.score >= s.rules.minScore ? 'yes' : 'Mondays only') : '<span class="muted">too wide</span>'}</td></tr>`;
         })
         .join('')}</table>`
     : '<p class="muted">No zones within reach.</p>';

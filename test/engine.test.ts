@@ -77,6 +77,47 @@ describe('zones on the 1h chart', () => {
     expect(ev.created[0]).toMatchObject({ side: 'buy', low: 104, high: 110 });
   });
 
+  it('order block: body of the last down candle before 2 up candles = buy zone (no wicks)', () => {
+    const s = createState();
+    onHourClose(s, bar(MON, 100, 101, 99, 100.5), cfg); // small up
+    onHourClose(s, bar(MON + H, 100.5, 102, 80, 90), cfg); // DOWN: body 90-100.5, wick to 80
+    onHourClose(s, bar(MON + 2 * H, 90, 96, 89, 95), cfg); // up 1
+    const ev = onHourClose(s, bar(MON + 3 * H, 95, 99, 94, 98), cfg); // up 2 -> order block
+    const ob = ev.created.find((z) => z.kind === 'block');
+    expect(ob).toMatchObject({ side: 'buy', low: 90, high: 100.5, startTime: MON + H, createdAt: MON + 4 * H });
+    // a third up candle does not make it again
+    const ev2 = onHourClose(s, bar(MON + 4 * H, 98, 104, 97, 103), cfg);
+    expect(ev2.created.filter((z) => z.kind === 'block')).toHaveLength(0);
+  });
+
+  it('order block: body of the last up candle before 2 down candles = sell zone', () => {
+    const s = createState();
+    onHourClose(s, bar(MON, 200, 201, 199, 199.5), cfg); // down
+    onHourClose(s, bar(MON + H, 199.5, 230, 199, 210), cfg); // UP: body 199.5-210, wick to 230
+    onHourClose(s, bar(MON + 2 * H, 210, 211, 203, 204), cfg); // down 1
+    const ev = onHourClose(s, bar(MON + 3 * H, 204, 205, 195, 196), cfg); // down 2
+    expect(ev.created.find((z) => z.kind === 'block')).toMatchObject({ side: 'sell', low: 199.5, high: 210 });
+  });
+
+  it('no order block after a single candle, or when the candle before the run went the same way', () => {
+    const s = createState();
+    onHourClose(s, bar(MON, 100, 106, 99, 105), cfg); // up
+    onHourClose(s, bar(MON + H, 105, 106, 96, 97), cfg); // down 1 only
+    const ev = onHourClose(s, bar(MON + 2 * H, 97, 103, 96, 102), cfg); // up 1
+    expect(ev.created.filter((z) => z.kind === 'block')).toHaveLength(0);
+    const ev2 = onHourClose(s, bar(MON + 3 * H, 102, 104, 101, 103.5), cfg); // up 2: candle before run is down (97)
+    expect(ev2.created.find((z) => z.kind === 'block')).toMatchObject({ side: 'buy', low: 97, high: 105 });
+  });
+
+  it('order blocks can be switched off', () => {
+    const s = createState();
+    const off = withConfig({ orderBlocks: false });
+    onHourClose(s, bar(MON + H, 100.5, 102, 80, 90), off);
+    onHourClose(s, bar(MON + 2 * H, 90, 96, 89, 95), off);
+    const ev = onHourClose(s, bar(MON + 3 * H, 95, 99, 94, 98), off);
+    expect(ev.created.filter((z) => z.kind === 'block')).toHaveLength(0);
+  });
+
   it('shrinks a partly filled zone and kills a filled one', () => {
     const s = createState();
     const z = zone();
@@ -216,11 +257,16 @@ describe('3-minute entries', () => {
     expect(onEntryBar(last, bar(TUE + 15 * H + 57 * 60, 125, 126, 118, 121), { positionOpen: false }, cfg)).toHaveLength(1); // 16:57-17:00
   });
 
-  it('skips zones wider than 25 points and zones scoring under 2 (Tue-Fri)', () => {
-    const wide = entryState(zone({ low: 90, high: 120 }));
-    expect(onEntryBar(wide, bar(T10, 125, 126, 118, 121), { positionOpen: false }, cfg)).toHaveLength(0);
+  it('trades wide zones (no width limit) but skips zones scoring under 2 (Tue-Fri)', () => {
+    const wide = entryState(zone({ low: 60, high: 120 })); // 60 points wide
+    expect(onEntryBar(wide, bar(T10, 125, 126, 118, 121), { positionOpen: false }, cfg)).toHaveLength(1);
     const weak = entryState(zone({ low: 130, high: 140 }), 'neutral'); // far from Monday levels, no bias
     expect(onEntryBar(weak, bar(T10, 145, 146, 138, 141), { positionOpen: false }, cfg)).toHaveLength(0);
+  });
+
+  it('a width limit can still be set', () => {
+    const wide = entryState(zone({ low: 60, high: 120 }));
+    expect(onEntryBar(wide, bar(T10, 125, 126, 118, 121), { positionOpen: false }, withConfig({ maxZoneWidth: 25 }))).toHaveLength(0);
   });
 
   it('on Mondays the zone alone is enough', () => {
