@@ -42,8 +42,14 @@ export interface Zone {
   expiredAt?: number;
   /** a position has been opened from this zone (one trade per zone) */
   traded: boolean;
-  /** a 3m bar closed through the zone; waiting for a close back */
+  /** legacy (before 'comeback' entries); ignored */
   reclaimBarsLeft?: number;
+  /** a touch trade has been taken from this zone */
+  touchTraded?: boolean;
+  /** furthest price reached beyond the zone (below a buy zone / above a sell zone) since the last comeback */
+  sweep?: number;
+  /** a 3m bar has closed beyond the zone and price has not closed back yet */
+  closedBeyond?: boolean;
 }
 
 export interface MondayLevels {

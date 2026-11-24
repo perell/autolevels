@@ -456,7 +456,9 @@ describe('real trading against a fake IG that executes orders', () => {
     const { ig, data } = await run({ trading: true });
     expect(ig.orders.length).toBeGreaterThan(3);
     for (const o of ig.orders) {
-      expect(o).toMatchObject({ epic: 'IX.D.DAX.IFD.IP', expiry: '-', size: 0.5, orderType: 'MARKET', currencyCode: 'EUR', forceOpen: true, guaranteedStop: true, stopDistance: 30, limitDistance: 90 });
+      expect(o).toMatchObject({ epic: 'IX.D.DAX.IFD.IP', expiry: '-', size: 0.5, orderType: 'MARKET', currencyCode: 'EUR', forceOpen: true, guaranteedStop: true });
+      expect(Number(o.stopDistance)).toBeGreaterThanOrEqual(30);
+      expect(Number(o.limitDistance)).toBe(3 * Number(o.stopDistance));
       expect(String(o.dealReference)).toMatch(/^ALV[a-z0-9]{1,27}$/);
     }
     expect(ig.deal.maxOpen).toBe(1);
@@ -483,9 +485,9 @@ describe('real trading against a fake IG that executes orders', () => {
     }
     expect(data.liveTrades.filter((t) => t.reason === 'stop').length).toBeGreaterThan(0);
     expect(data.liveTrades.filter((t) => t.reason === 'target').length).toBeGreaterThan(0);
-    // stop/target exits recorded at the IG levels
+    // stop/target exits recorded at the IG levels: a stop loses the stop distance, a target wins 3x
     for (const t of data.liveTrades.filter((x) => x.reason === 'stop' || x.reason === 'target')) {
-      expect(Math.abs(t.points!)).toBeCloseTo(t.reason === 'stop' ? 30 : 90, 5);
+      expect(Math.abs(t.points!)).toBeCloseTo(t.reason === 'stop' ? t.risk! : 3 * t.risk!, 5);
     }
     expect(data.log.filter((l) => l.level === 'error')).toEqual([]);
   });
@@ -644,8 +646,9 @@ describe('order safety checks', () => {
   });
 
   it('refuses a stop closer than IG allows for guaranteed stops', async () => {
-    const { t, ig, logs } = setup({}, { stopPoints: 20 });
-    expect(await t.open(sig(), now)).toBe(false);
+    const { t, ig, logs } = setup();
+    expect(await t.open(sig({ stop: 23980, target: 24060 }), now)).toBe(false); // 20 points
+
     expect(ig.orders).toHaveLength(0);
     expect(logs.join()).toContain('closer than IG allows');
   });

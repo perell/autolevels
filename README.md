@@ -114,15 +114,15 @@ identical trades from the same prices).
 | Zone (gap) | 3-candle gap on 1h (candle 1 and 3 do not overlap) |
 | Zone (order block) | body (no wicks) of a candle followed by a candle the other way (`orderBlockRun` = 1; can be raised) |
 | Strong move | middle candle body >= 1.5 x ATR(14), or part of 3+ candles in a row the same way |
-| Unfilled | partly filled zones shrink to the unfilled part; fully filled = dead |
+| Valid | a zone stays valid until a 1h candle CLOSES beyond it (wicks don't count) and keeps its full size (`zoneDiesOnClose`, `shrinkZones`) |
 | Reach | created within the last 10 trading days (and within 300 pts, for listing) |
 | Monday | high / low / mid, available once Monday has closed |
 | Bias (Tue–Fri) | 1h close above Monday high = bullish, below low = bearish; back inside within 2 candles, or a wick out from inside that closes back in = opposite bias; latest event wins; resets weekly |
 | Score | Monday high/low +2, Monday mid +1, bias direction +1; shown for information, minimum 0 (`minScore`): every zone is traded |
 | Waiting period | a new zone can be traded only after one full 1h candle has closed after it was found (`zoneWaitHours`); touches before that are ignored |
-| Entry | 3m bar touches the zone and does not close through it -> market at the close. Closes through -> entry if a close back comes within 3 bars |
+| Entry | touch: a 3m bar touches the zone and does not close beyond it -> market at the close. Comeback: after price has been beyond the zone, a 3m close back -> entry (no time limit while the zone is valid). At most one touch and one comeback trade per zone |
 | Limits | one trade per zone, one position at a time, entries 09:00–17:00 (Berlin/Oslo time), no zone width limit (`maxZoneWidth` 0) |
-| Exit | stop 30 pts from entry, target 90 pts (3:1), flat at 17:30 |
+| Exit | touch: stop 30 pts beyond the zone; comeback: stop 10 pts beyond the furthest price outside the zone; never closer than 30 pts to entry; target 3x the stop; flat at 17:30 |
 | Backtest | stop+target in the same bar = stop; gaps fill at the open; 1.2 pts spread per trade |
 
 Every number is in `src/core/config.ts` and can be changed per run with `--set`.

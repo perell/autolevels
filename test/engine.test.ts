@@ -125,19 +125,30 @@ describe('zones on the 1h chart', () => {
     expect(ev.created.filter((z) => z.kind === 'block')).toHaveLength(0);
   });
 
-  it('shrinks a partly filled zone and kills a filled one', () => {
+  it('a zone lives through wicks and dies only on a 1h close beyond it; it keeps its full size', () => {
     const s = createState();
     const z = zone();
     s.zones = [z];
-    onHourClose(s, bar(MON + 3 * H, 130, 135, 115, 125), cfg);
-    expect(z.high).toBe(115);
+    onHourClose(s, bar(MON + 3 * H, 130, 135, 115, 125), cfg); // wick into the zone
+    expect([z.low, z.high, z.alive]).toEqual([100, 120, true]);
+    onHourClose(s, bar(MON + 4 * H, 125, 126, 90, 105), cfg); // wick below, closes back inside
     expect(z.alive).toBe(true);
-    const ev = onHourClose(s, bar(MON + 4 * H, 125, 126, 99, 110), cfg);
+    const ev = onHourClose(s, bar(MON + 5 * H, 105, 106, 85, 95), cfg); // closes below
     expect(z.alive).toBe(false);
     expect(ev.died).toContain(z);
-    expect(s.zones).toHaveLength(0);
+    expect(s.zones.filter((x) => x.id === z.id)).toHaveLength(0);
   });
 
+  it('old behaviour is still available as settings (shrink, wick kills)', () => {
+    const s = createState();
+    const z = zone();
+    s.zones = [z];
+    const old = withConfig({ shrinkZones: true, zoneDiesOnClose: false });
+    onHourClose(s, bar(MON + 3 * H, 130, 135, 115, 125), old);
+    expect(z.high).toBe(115);
+    onHourClose(s, bar(MON + 4 * H, 125, 126, 99, 110), old);
+    expect(z.alive).toBe(false);
+  });
   it('drops zones older than 10 trading days', () => {
     const s = createState();
     s.zones = [zone({ createdDate: '2026-11-02' })];
@@ -224,13 +235,19 @@ describe('confluence score', () => {
 });
 
 describe('3-minute entries', () => {
-  it('touch + close inside or out of the zone = entry at the close, stop 30, target 90', () => {
-    const s = entryState(zone()); // Monday low 105 sits in the zone -> score 2 (+1 bullish) = 3
+  it('touch = entry at the close; stop 30 below the zone, target 3x the stop', () => {
+    const s = entryState(zone()); // zone 100-120; Monday low 105 sits in the zone -> score 2 (+1 bullish) = 3
     const [sig] = onEntryBar(s, bar(T10, 125, 126, 118, 121), { positionOpen: false }, cfg);
-    expect(sig).toMatchObject({ kind: 'open', side: 'buy', price: 121, stop: 91, target: 211, trigger: 'touch', score: 3 });
-    expect(s.zones[0].traded).toBe(true);
+    // stop 100 - 30 = 70 -> 51 points; target 121 + 3 x 51 = 274
+    expect(sig).toMatchObject({ kind: 'open', side: 'buy', price: 121, stop: 70, target: 274, trigger: 'touch', score: 3 });
+    expect(s.zones[0].touchTraded).toBe(true);
   });
 
+  it('the stop is never closer than 30 points to the entry', () => {
+    const s = entryState(zone({ low: 118, high: 120 })); // thin zone: 118 - 30 = 88 would be 33 below 121... use entry 119
+    const [sig] = onEntryBar(s, bar(T10, 125, 126, 118.5, 119), { positionOpen: false }, withConfig({ touchStopBeyondZone: 5 }));
+    expect(sig).toMatchObject({ stop: 89 }); // 118 - 5 = 113 is only 6 away -> moved to 30 below 119
+  });
   it('a new zone waits one full 1h candle: touches before that are ignored', () => {
     // zone found at 09:00 UTC (10:00 Berlin): tradeable from 10:00 UTC (11:00 Berlin)
     const found = TUE + 9 * H;
@@ -269,14 +286,39 @@ describe('3-minute entries', () => {
     expect(sig).toMatchObject({ kind: 'open', trigger: 'reclaim', price: 103 });
   });
 
-  it('no close back within 3 bars = zone dead', () => {
+  it('below the zone for a long time, then a close back above = comeback entry, stop 10 below the low', () => {
     const s = entryState(zone());
-    onEntryBar(s, bar(T10, 125, 126, 95, 97), { positionOpen: false }, cfg);
-    for (let i = 1; i <= 3; i++) onEntryBar(s, bar(T10 + i * 180, 97, 99, 92, 96), { positionOpen: false }, cfg);
-    expect(s.zones[0].alive).toBe(false);
-    expect(onEntryBar(s, bar(T10 + 4 * 180, 96, 110, 95, 108), { positionOpen: false }, cfg)).toHaveLength(0);
+    onEntryBar(s, bar(T10, 125, 126, 95, 97), { positionOpen: false }, cfg); // closes below
+    for (let i = 1; i <= 10; i++) onEntryBar(s, bar(T10 + i * 180, 97, 99, i === 5 ? 60 : 92, 96), { positionOpen: false }, cfg);
+    expect(s.zones[0].alive).toBe(true); // only a 1h close below kills it
+    const [sig] = onEntryBar(s, bar(T10 + 11 * 180, 96, 104, 95, 103), { positionOpen: false }, cfg);
+    // lowest point 60 -> stop 50 (53 points), target 103 + 159
+    expect(sig).toMatchObject({ trigger: 'reclaim', price: 103, stop: 50, target: 262 });
   });
 
+  it('a wick below that closes back above in the same bar is a comeback (stop below the wick)', () => {
+    const s = entryState(zone());
+    const [sig] = onEntryBar(s, bar(T10, 125, 126, 80, 110), { positionOpen: false }, cfg);
+    expect(sig).toMatchObject({ trigger: 'reclaim', price: 110, stop: 70 }); // 80 - 10
+  });
+
+  it('after a touch trade, one more trade when price comes back after going below; then the zone is done', () => {
+    const s = entryState(zone());
+    expect(onEntryBar(s, bar(T10, 125, 126, 118, 121), { positionOpen: false }, cfg)[0]).toMatchObject({ trigger: 'touch' });
+    expect(onEntryBar(s, bar(T10 + 180, 121, 122, 110, 115), { positionOpen: false }, cfg)).toHaveLength(0); // still inside: no 2nd touch
+    onEntryBar(s, bar(T10 + 360, 115, 116, 90, 95), { positionOpen: false }, cfg); // closes below (position closed meanwhile)
+    expect(onEntryBar(s, bar(T10 + 540, 95, 106, 94, 105), { positionOpen: false }, cfg)[0]).toMatchObject({ trigger: 'reclaim' });
+    expect(s.zones[0].traded).toBe(true);
+    onEntryBar(s, bar(T10 + 720, 105, 106, 90, 95), { positionOpen: false }, cfg);
+    expect(onEntryBar(s, bar(T10 + 900, 95, 106, 94, 105), { positionOpen: false }, cfg)).toHaveLength(0);
+  });
+
+  it('a comeback while a position is open is not saved for later', () => {
+    const s = entryState(zone());
+    onEntryBar(s, bar(T10, 125, 126, 95, 97), { positionOpen: true }, cfg);
+    expect(onEntryBar(s, bar(T10 + 180, 97, 106, 95, 105), { positionOpen: true }, cfg)).toHaveLength(0);
+    expect(onEntryBar(s, bar(T10 + 360, 125, 140, 121, 135), { positionOpen: false }, cfg)).toHaveLength(0); // above the zone
+  });
   it('no new positions outside 09:00-17:00 or while a position is open', () => {
     const early = entryState(zone());
     expect(onEntryBar(early, bar(TUE + 7 * H + 57 * 60, 125, 126, 118, 121), { positionOpen: false }, cfg)).toHaveLength(0); // 08:57-09:00
@@ -316,9 +358,9 @@ describe('3-minute entries', () => {
   it('sell zones mirror buy zones', () => {
     const s = entryState(zone({ id: 'sell-x', side: 'sell', low: 290, high: 310 }), 'bearish');
     const [sig] = onEntryBar(s, bar(T10, 280, 295, 279, 293), { positionOpen: false }, cfg);
-    expect(sig).toMatchObject({ side: 'sell', price: 293, stop: 323, target: 203, score: 3 });
+    // stop 310 + 30 = 340 (47 points), target 293 - 141
+    expect(sig).toMatchObject({ side: 'sell', price: 293, stop: 340, target: 152, score: 3 });
   });
-
   it('asks to close an open position at 17:30', () => {
     const s = entryState(zone());
     const out = onEntryBar(s, bar(TUE + 16 * H + 27 * 60, 150, 151, 149, 150), { positionOpen: true }, cfg);
@@ -330,19 +372,17 @@ describe('backtest exits', () => {
   // Monday: three strong up candles make a buy zone 112-120 (created 03:00 UTC); Monday = no score needed
   const hours = [bar(MON, 100, 112, 99, 110), bar(MON + H, 110, 131, 109, 130), bar(MON + 2 * H, 130, 141, 120, 140)];
   const E = MON + 8 * H; // 09:00 Berlin
-  const entry = bar(E, 125, 126, 118, 121); // long at 121, stop 91, target 211
+  const entry = bar(E, 125, 126, 118, 121); // long at 121, stop 82 (30 below the zone), target 238
 
   it('target hit', () => {
-    const r = runBacktest(hours, [entry, bar(E + 180, 121, 212, 120, 200)], cfg);
-    expect(r.trades[0]).toMatchObject({ exitReason: 'target', exit: 211 });
-    expect(r.trades[0].points).toBeCloseTo(90 - cfg.spreadPoints);
+    const r = runBacktest(hours, [entry, bar(E + 180, 121, 240, 120, 200)], cfg);
+    expect(r.trades[0]).toMatchObject({ exitReason: 'target', stop: 82, exit: 238 });
+    expect(r.trades[0].points).toBeCloseTo(117 - cfg.spreadPoints);
   });
-
   it('stop and target in the same bar counts as the stop', () => {
-    const r = runBacktest(hours, [entry, bar(E + 180, 121, 215, 85, 150)], cfg);
-    expect(r.trades[0]).toMatchObject({ exitReason: 'stop', exit: 91 });
+    const r = runBacktest(hours, [entry, bar(E + 180, 121, 245, 80, 150)], cfg);
+    expect(r.trades[0]).toMatchObject({ exitReason: 'stop', exit: 82 });
   });
-
   it('gap through the stop fills at the open', () => {
     const r = runBacktest(hours, [entry, bar(E + 180, 80, 85, 75, 82)], cfg);
     expect(r.trades[0]).toMatchObject({ exitReason: 'stop', exit: 80 });

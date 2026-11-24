@@ -22,6 +22,16 @@ export interface Config {
   orderBlockRun: number;
   /** find order blocks at all */
   orderBlocks: boolean;
+  /** a zone dies only when a 1h candle CLOSES beyond it (wicks do not count); false = any touch of the far edge */
+  zoneDiesOnClose: boolean;
+  /** shrink a zone to its unfilled part when price wicks into it (false = keep full size) */
+  shrinkZones: boolean;
+  /** touch entry: stop this many points beyond the far edge of the zone */
+  touchStopBeyondZone: number;
+  /** comeback entry: stop this many points beyond the furthest price reached outside the zone */
+  comebackStopBeyondSweep: number;
+  /** after a touch trade, allow one more trade when price comes back into the zone after going beyond it */
+  reentryOnComeback: boolean;
   /** a new zone can be traded only after this many full 1h candles have closed after it was found */
   zoneWaitHours: number;
   /** ignore tiny gaps narrower than this */
@@ -46,12 +56,13 @@ export interface Config {
   entryEnd: string;
   /** close any open position at this local time */
   flatTime: string;
-  /** after a 3m close through the zone, a close back within this many bars is an entry */
+  /** legacy setting, no longer used (comeback entries have no time limit) */
   reclaimBars: number;
   /** only one open position at a time */
   oneAtATime: boolean;
 
   // Exits
+  /** the stop is never closer than this many points to the entry */
   stopPoints: number;
   rewardRisk: number;
 
@@ -72,6 +83,11 @@ export const defaultConfig: Config = {
   orderBlockRun: 1,
   orderBlocks: true,
   zoneWaitHours: 1,
+  zoneDiesOnClose: true,
+  shrinkZones: false,
+  touchStopBeyondZone: 30,
+  comebackStopBeyondSweep: 10,
+  reentryOnComeback: true,
   minZoneWidth: 0,
 
   mondayProximity: 10,

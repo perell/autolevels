@@ -102,15 +102,16 @@ export function onHourClose(state: EngineState, bar: Bar, cfg: Config): HourEven
   // 5. bias from Monday's range (Tuesday-Friday)
   if (state.monday?.complete && lt.weekday !== 1) updateBias(state, bar, cfg, ev);
 
-  // 6. fill / kill existing zones with this bar
+  // 6. update existing zones with this bar: a zone dies when a 1h candle closes beyond it
+  //    (or, with zoneDiesOnClose off, when price touches its far edge)
   for (const z of state.zones) {
-    if (!z.alive || z.createdAt > bar.time || z.reclaimBarsLeft != null) continue;
+    if (!z.alive || z.createdAt > bar.time) continue;
     if (z.side === 'buy') {
-      if (bar.low <= z.low) kill(z, bar.time + HOUR, ev);
-      else if (bar.low < z.high) z.high = bar.low;
+      if (cfg.zoneDiesOnClose ? bar.close < z.low : bar.low <= z.low) kill(z, bar.time + HOUR, ev);
+      else if (cfg.shrinkZones && bar.low > z.low && bar.low < z.high) z.high = bar.low;
     } else {
-      if (bar.high >= z.high) kill(z, bar.time + HOUR, ev);
-      else if (bar.high > z.low) z.low = bar.high;
+      if (cfg.zoneDiesOnClose ? bar.close > z.high : bar.high >= z.high) kill(z, bar.time + HOUR, ev);
+      else if (cfg.shrinkZones && bar.high < z.high && bar.high > z.low) z.low = bar.high;
     }
   }
 
@@ -271,45 +272,46 @@ export function onEntryBar(
   const canOpen = inWindow && !(cfg.oneAtATime && ctx.positionOpen);
   const isMonday = lo.weekday === 1;
 
-  type Cand = { z: Zone; trigger: 'touch' | 'reclaim'; score: number; parts: string[] };
+  type Cand = { z: Zone; trigger: 'touch' | 'reclaim'; score: number; parts: string[]; stop: number };
   const cands: Cand[] = [];
+  const afterBar: Zone[] = [];
 
   for (const z of state.zones) {
     // a new zone waits `zoneWaitHours` full 1h candles before it can be traded; touches are ignored until then
     if (!z.alive || z.traded || bar.time < tradeableFrom(z, cfg)) continue;
     const buy = z.side === 'buy';
-
-    if (z.reclaimBarsLeft != null) {
-      const back = buy ? bar.close >= z.low : bar.close <= z.high;
-      if (back) {
-        const c = eligible(z, 'reclaim');
-        if (c) cands.push(c);
-        else kill3m(z, closeTime); // closed back but could not trade: zone is used up
-      } else {
-        z.reclaimBarsLeft -= 1;
-        if (z.reclaimBarsLeft <= 0) kill3m(z, closeTime);
-      }
+    const beyond = buy ? bar.low < z.low : bar.high > z.high;
+    if (beyond) z.sweep = buy ? Math.min(z.sweep ?? Infinity, bar.low) : Math.max(z.sweep ?? -Infinity, bar.high);
+    const closedBeyond = buy ? bar.close < z.low : bar.close > z.high;
+    if (closedBeyond) {
+      // below a buy zone (above a sell zone): wait for a close back; the zone lives until a 1h close beyond it
+      z.closedBeyond = true;
       continue;
     }
-
     const touched = buy ? bar.low <= z.high : bar.high >= z.low;
-    if (!touched) continue;
-    const through = buy ? bar.close < z.low : bar.close > z.high;
-    if (through) {
-      z.reclaimBarsLeft = cfg.reclaimBars;
-      continue;
+    // comeback: price went beyond the zone (this bar or earlier) and this bar closed back
+    const comeback = z.sweep != null && (beyond || z.closedBeyond === true);
+    if (comeback) {
+      if (!z.touchTraded || cfg.reentryOnComeback) {
+        const stop = buy ? z.sweep! - cfg.comebackStopBeyondSweep : z.sweep! + cfg.comebackStopBeyondSweep;
+        const c = eligible(z, 'reclaim', stop);
+        if (c) cands.push(c);
+      }
+      afterBar.push(z); // one chance per comeback
+    } else if (touched && !z.touchTraded) {
+      const stop = buy ? z.low - cfg.touchStopBeyondZone : z.high + cfg.touchStopBeyondZone;
+      const c = eligible(z, 'touch', stop);
+      if (c) cands.push(c);
     }
-    const c = eligible(z, 'touch');
-    if (c) cands.push(c);
   }
 
-  function eligible(z: Zone, trigger: Cand['trigger']): Cand | null {
+  function eligible(z: Zone, trigger: Cand['trigger'], stop: number): Cand | null {
     if (!canOpen) return null;
     if (cfg.maxZoneWidth > 0 && z.high - z.low > cfg.maxZoneWidth) return null;
     const s = scoreZone(z, state.monday, state.bias, cfg);
     const needScore = !(isMonday && cfg.mondayNoScore);
     if (needScore && s.score < cfg.minScore) return null;
-    return { z, trigger, score: s.score, parts: s.parts };
+    return { z, trigger, score: s.score, parts: s.parts, stop };
   }
 
   if (cands.length) {
@@ -318,9 +320,13 @@ export function onEntryBar(
     const picks = cfg.oneAtATime ? cands.slice(0, 1) : cands;
     for (const c of picks) {
       const long = c.z.side === 'buy';
-      const risk = cfg.stopPoints;
-      c.z.traded = true;
-      c.z.reclaimBarsLeft = undefined;
+      // stop: from the rule, never closer than stopPoints; whole points (IG needs whole-point distances)
+      const raw = long ? bar.close - c.stop : c.stop - bar.close;
+      const risk = Math.ceil(Math.max(raw, cfg.stopPoints) - 1e-9);
+      if (c.trigger === 'touch') {
+        c.z.touchTraded = true;
+        if (!cfg.reentryOnComeback) c.z.traded = true;
+      } else c.z.traded = true;
       out.push({
         kind: 'open',
         side: c.z.side,
@@ -335,18 +341,16 @@ export function onEntryBar(
       });
     }
   }
+  for (const z of afterBar) {
+    z.sweep = undefined;
+    z.closedBeyond = false;
+  }
   return out;
 }
 
 /** First moment (unix s) a zone can be traded. */
 export function tradeableFrom(z: Zone, cfg: Config): number {
   return z.createdAt + Math.max(0, cfg.zoneWaitHours) * HOUR;
-}
-
-function kill3m(z: Zone, at: number) {
-  z.alive = false;
-  z.diedAt = at;
-  z.reclaimBarsLeft = undefined;
 }
 
 /** Zones worth showing right now: alive, untraded and within `reachPoints` of price. */

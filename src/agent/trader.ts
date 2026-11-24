@@ -28,6 +28,8 @@ export interface LivePosition {
   limitLevel: number | null;
   openedAt: number;
   zoneId: string;
+  /** stop distance in points at entry */
+  risk?: number;
   /** first stop/target touch seen in our 3m bars (used if IG closes the position) */
   hit?: { time: number; price: number; reason: 'stop' | 'target' };
   /** IG no longer lists the position; recorded once this run's bars are read */
@@ -48,6 +50,8 @@ export interface LiveTrade {
   points: number | null;
   /** exit taken from our own price bars, not from IG */
   estimated: boolean;
+  /** stop distance in points at entry */
+  risk?: number;
 }
 
 /** The part of the agent's stored data the trader uses. */
@@ -78,10 +82,11 @@ export class Trader {
   today(now: number) {
     const day = local(now, this.cfg.tz).date;
     const onDay = (t: number) => local(t, this.cfg.tz).date === day;
-    const worst = -(this.cfg.stopPoints + (this.s.guaranteedStop ? GSL_PREMIUM_FALLBACK : 0));
+    const premium = this.s.guaranteedStop ? GSL_PREMIUM_FALLBACK : 0;
+    const worst = (t: LiveTrade) => -((t.risk ?? this.cfg.stopPoints) + premium);
     const closed = this.d.liveTrades.filter((t) => onDay(t.openedAt));
     const opened = closed.length + (this.d.live && onDay(this.d.live.openedAt) ? 1 : 0);
-    const points = closed.reduce((sum, t) => sum + (t.points ?? worst), 0);
+    const points = closed.reduce((sum, t) => sum + (t.points ?? worst(t)), 0);
     return { opened, points };
   }
 
@@ -156,8 +161,10 @@ export class Trader {
     if (status !== 'TRADEABLE') return skip(`market is ${status}`, 'warn');
     const min = rules.minDealSize?.value ?? 0;
     if (this.s.size < min) return skip(`size ${this.s.size} is below IG's minimum ${min}`, 'warn');
+    const stopDistance = Math.round(Math.abs(sig.price - sig.stop));
+    const limitDistance = Math.round(Math.abs(sig.target - sig.price));
     const minStop = (this.s.guaranteedStop ? rules.minControlledRiskStopDistance?.value : rules.minNormalStopOrLimitDistance?.value) ?? 0;
-    if (this.cfg.stopPoints < minStop) return skip(`stop ${this.cfg.stopPoints} is closer than IG allows (${minStop})`, 'warn');
+    if (stopDistance < minStop) return skip(`stop ${stopDistance} is closer than IG allows (${minStop})`, 'warn');
     const currencies = (m.instrument.currencies as { code: string; isDefault?: boolean }[] | undefined) ?? [];
     const currency = (currencies.find((c) => c.isDefault) ?? currencies[0])?.code;
     if (!currency) return skip('market has no currency', 'warn');
@@ -171,8 +178,8 @@ export class Trader {
         direction,
         size: this.s.size,
         currencyCode: currency,
-        stopDistance: this.cfg.stopPoints,
-        limitDistance: this.cfg.stopPoints * this.cfg.rewardRisk,
+        stopDistance,
+        limitDistance,
         guaranteedStop: this.s.guaranteedStop,
         dealReference: ref,
       });
@@ -192,6 +199,7 @@ export class Trader {
         limitLevel: c.limitLevel,
         openedAt: now,
         zoneId: sig.zoneId,
+        risk: stopDistance,
       };
       this.log(
         'info',
@@ -253,6 +261,7 @@ export class Trader {
       reason,
       points,
       estimated,
+      risk: p.risk,
     });
     if (this.d.liveTrades.length > 200) this.d.liveTrades.splice(0, this.d.liveTrades.length - 200);
     this.d.live = null;

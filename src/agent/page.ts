@@ -112,7 +112,7 @@ export function statusPage(s: Status, token: string): string {
             : `<form method="post" action="/api/trading?token=${t}"><input type="hidden" name="on" value="1">
                <input type="text" name="confirm" placeholder="type ON" style="width:80px"> <button>Turn real trading ON</button></form>`
         }</div>
-        <div class="muted">${esc(ts!.epic)} · size ${ts!.size} · stop ${s.rules.stopPoints} pts${ts!.guaranteedStop ? ' (guaranteed)' : ''} · target ${s.rules.stopPoints * s.rules.rewardRisk} pts ·
+        <div class="muted">${esc(ts!.epic)} · size ${ts!.size} · stop ${s.rules.touchStopBeyondZone} pts beyond the zone (comeback: ${s.rules.comebackStopBeyondSweep} beyond the low/high, never under ${s.rules.stopPoints} from entry)${ts!.guaranteedStop ? ', guaranteed' : ''} · target ${s.rules.rewardRisk}× the stop ·
         max ${ts!.maxTradesPerDay} trades and ${ts!.maxDailyLossPoints} pts loss per day</div>
         ${today ? `<div>Today: ${today.opened} trade(s), ${today.points >= 0 ? '+' : ''}${f1(today.points)} pts</div>` : ''}
         ${s.foreign ? `<p class="warn">${esc(s.foreign)}: the agent will not open new positions until they are closed.</p>` : ''}
