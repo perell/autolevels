@@ -264,11 +264,17 @@ describe('3-minute entries', () => {
     expect(onEntryBar(last, bar(TUE + 15 * H + 57 * 60, 125, 126, 118, 121), { positionOpen: false }, cfg)).toHaveLength(1); // 16:57-17:00
   });
 
-  it('trades wide zones (no width limit) but skips zones scoring under 2 (Tue-Fri)', () => {
+  it('trades wide zones (no width limit) and zones with score 0 (the default)', () => {
     const wide = entryState(zone({ low: 60, high: 120 })); // 60 points wide
     expect(onEntryBar(wide, bar(T10, 125, 126, 118, 121), { positionOpen: false }, cfg)).toHaveLength(1);
     const weak = entryState(zone({ low: 130, high: 140 }), 'neutral'); // far from Monday levels, no bias
-    expect(onEntryBar(weak, bar(T10, 145, 146, 138, 141), { positionOpen: false }, cfg)).toHaveLength(0);
+    const [sig] = onEntryBar(weak, bar(T10, 145, 146, 138, 141), { positionOpen: false }, cfg);
+    expect(sig).toMatchObject({ kind: 'open', score: 0 });
+  });
+
+  it('a minimum score can still be set (Tue-Fri)', () => {
+    const weak = entryState(zone({ low: 130, high: 140 }), 'neutral');
+    expect(onEntryBar(weak, bar(T10, 145, 146, 138, 141), { positionOpen: false }, withConfig({ minScore: 2 }))).toHaveLength(0);
   });
 
   it('a width limit can still be set', () => {

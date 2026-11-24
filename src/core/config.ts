@@ -72,7 +72,7 @@ export const defaultConfig: Config = {
   minZoneWidth: 0,
 
   mondayProximity: 10,
-  minScore: 2,
+  minScore: 0,
   mondayNoScore: true,
   falseBreakWindow: 2,
   wickIsFalseBreak: true,
