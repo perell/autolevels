@@ -17,8 +17,8 @@ Settings are in `wrangler.toml` (deployed automatically from GitHub):
 | `TRADE_EPIC` | `IX.D.DAX.INE.IP` | Germany 40 Cash (€1 per point at size 1) |
 | `TRADE_SIZE` | `0.01` | €0.01 per point: a 30-point stop risks about €0.30 |
 | `GUARANTEED_STOP` | `true` | loss stops exactly at the stop; IG charges a 2-point premium if hit |
-| `MAX_TRADES_PER_DAY` | `3` | no new orders after this many trades in a day |
-| `MAX_DAILY_LOSS_POINTS` | `100` | no new orders after losing this many points in a day |
+| `MAX_TRADES_PER_DAY` | `5` | no new orders after this many trades in a day |
+| `MAX_DAILY_LOSS_POINTS` | `150` | no new orders after losing this many points in a day |
 
 **The switch:** on the status page, type `ON` and press *Turn real trading ON*. Off by default.
 

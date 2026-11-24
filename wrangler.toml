@@ -21,9 +21,9 @@ TRADE_SIZE = "0.01"
 # Guaranteed stop: loss stops exactly at the stop, IG charges a small premium if it is hit
 GUARANTEED_STOP = "true"
 # No new orders after this many trades in a day ...
-MAX_TRADES_PER_DAY = "3"
+MAX_TRADES_PER_DAY = "5"
 # ... or after losing this many points in a day
-MAX_DAILY_LOSS_POINTS = "100"
+MAX_DAILY_LOSS_POINTS = "150"
 
 [[durable_objects.bindings]]
 name = "AGENT"
