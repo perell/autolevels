@@ -23,7 +23,7 @@ GUARANTEED_STOP = "true"
 # No new orders after this many trades in a day ...
 MAX_TRADES_PER_DAY = "5"
 # ... or after losing this many points in a day
-MAX_DAILY_LOSS_POINTS = "150"
+MAX_DAILY_LOSS_POINTS = "250"
 # ... or after losing this % of the day's starting balance (balance + open P&L, from IG). 0 = off.
 # Open positions are left alone; only new positions are stopped.
 MAX_DAILY_LOSS_PERCENT = "5"
