@@ -85,7 +85,8 @@ function draw(d) {
     const span = next ? Math.min(3600, next - times[lo]) : 3600;
     return lo + Math.min(next ? 1 : Infinity, (t - times[lo]) / span);
   }
-  const barTime = (t) => times[Math.max(0, Math.floor(logical(t)))];
+  // the 1h candle a time belongs to (times in the hour that has not closed yet go on the newest candle)
+  const barTime = (t) => times[Math.min(times.length - 1, Math.max(0, Math.floor(logical(t))))];
   const X = (t) => chart.timeScale().logicalToCoordinate(logical(t));
   const Y = (p) => series.priceToCoordinate(p);
 
@@ -112,9 +113,17 @@ function draw(d) {
     trades(d.liveTrades, true);
     if (d.live) m.push({ time: barTime(d.live.openedAt), position: d.live.side === 'buy' ? 'belowBar' : 'aboveBar', shape: d.live.side === 'buy' ? 'arrowUp' : 'arrowDown', color: '#2457c5', text: 'REAL open' });
     m.sort((a, b) => a.time - b.time);
-    series.setMarkers(m);
+    try {
+      series.setMarkers(m.filter((x) => x.time != null));
+    } catch (e) {
+      console.error('markers', e);
+    }
   }
-  setMarkers();
+  try {
+    setMarkers();
+  } catch (e) {
+    console.error('markers', e);
+  }
   for (const k of ['dead', 'paper', 'bias']) ui[k].addEventListener('change', () => { setMarkers(); schedule(); });
 
   const canvas = document.getElementById('overlay');
@@ -122,6 +131,14 @@ function draw(d) {
   const lastBarEnd = times[times.length - 1] + 3600;
 
   function paint() {
+    try {
+      paintInner();
+    } catch (e) {
+      console.error('overlay', e);
+    }
+  }
+
+  function paintInner() {
     const dpr = window.devicePixelRatio || 1;
     const w = el.clientWidth, h = el.clientHeight;
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
