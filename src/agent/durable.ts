@@ -29,7 +29,7 @@ export interface Env {
 }
 
 // stored under separate keys to stay well inside per-value size limits
-const KEYS = ['core', 'trades', 'signals', 'log', 'bars', 'zones'] as const;
+const KEYS = ['core', 'trades', 'signals', 'log', 'bars', 'zones', 'bars3'] as const;
 
 export class AgentDO {
   constructor(
@@ -48,12 +48,13 @@ export class AgentDO {
       signals: (got.get('signals') as AgentData['signals']) ?? [],
       log: (got.get('log') as AgentData['log']) ?? [],
       hourBars: (got.get('bars') as AgentData['hourBars']) ?? [],
+      m3Bars: (got.get('bars3') as AgentData['m3Bars']) ?? [],
       zoneLog: (got.get('zones') as AgentData['zoneLog']) ?? [],
     };
   }
 
   private async save(d: AgentData) {
-    const { trades, signals, log, hourBars, zoneLog, ...core } = d;
+    const { trades, signals, log, hourBars, zoneLog, m3Bars, ...core } = d;
     core.liveTrades = core.liveTrades.slice(-200);
     await this.ctx.storage.put({
       core,
@@ -61,6 +62,7 @@ export class AgentDO {
       signals: signals.slice(-200),
       log: log.slice(-300),
       bars: hourBars,
+      bars3: m3Bars.slice(-1500),
       zones: zoneLog.slice(-400),
     });
   }

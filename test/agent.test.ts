@@ -299,6 +299,9 @@ describe('agent against a fake IG', () => {
     }
     expect(chart.mondays.map((m) => [m.date, m.high, m.low])).toEqual(bt.mondays.slice(-8).map((m) => [m.date, m.high, m.low]));
     expect(chart.zones.some((z) => z.score != null)).toBe(true);
+    // 3m view: every 3m bar the agent read (after the warm-up), newest last, at most 1500
+    const read3 = m3.filter((b) => b.time > startAfter && b.time + 180 <= last);
+    expect(chart.bars3).toEqual(read3.slice(-1500));
   });
 
   it('logs in again when the session token expires', async () => {

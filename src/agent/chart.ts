@@ -19,15 +19,20 @@ export function chartPage(token: string): string {
   .legend{display:flex;flex-wrap:wrap;gap:6px 14px;padding:8px 14px;font-size:12px;color:#4a5263}
   .sw{display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:-2px;margin-right:4px}
   #msg{padding:20px;color:#8a93a5}
+  .seg{display:inline-flex;border:1px solid #c9ced8;border-radius:6px;overflow:hidden}
+  .seg button{font:inherit;font-size:13px;padding:4px 12px;border:0;background:#fff;cursor:pointer}
+  .seg button.on{background:#1d2330;color:#fff}
+  #note{position:absolute;left:12px;top:10px;z-index:6;color:#8a93a5;font-size:13px;pointer-events:none}
 </style></head><body>
 <header>
-  <h1>Chart · Germany 40, 1h</h1>
+  <h1 id="title">Chart · Germany 40</h1>
+  <span class="seg"><button data-v="1h">1h</button><button data-v="3m">3m</button></span>
   <label><input type="checkbox" id="dead"> filled / expired zones</label>
   <label><input type="checkbox" id="paper" checked> paper trades</label>
   <label><input type="checkbox" id="bias" checked> bias changes</label>
   <a href="/?token=${encodeURIComponent(token)}">Back to status</a>
 </header>
-<div id="wrap"><div id="chart"></div><canvas id="overlay"></canvas><div id="msg">Loading…</div></div>
+<div id="wrap"><div id="chart"></div><canvas id="overlay"></canvas><div id="note"></div><div id="msg">Loading…</div></div>
 <div class="legend">
   <span><span class="sw" style="background:rgba(10,125,85,.25);border:1px solid #0a7d55"></span>buy zone</span>
   <span><span class="sw" style="background:rgba(192,57,43,.22);border:1px solid #c0392b"></span>sell zone</span>
@@ -35,6 +40,7 @@ export function chartPage(token: string): string {
   <span><span class="sw" style="border:2px solid #2457c5"></span>traded zone</span>
   <span><span class="sw" style="background:rgba(120,130,145,.18)"></span>filled / expired</span>
   <span><span class="sw" style="background:#e67e22"></span>Monday high / low (dashed: mid)</span>
+  <span><span class="sw" style="background:#2457c5"></span>open position: entry, stop (red dashed), target (green dashed)</span>
   <span>Numbers on zones: score now. "waiting": new zone, tradeable after one full 1h candle. Times: Oslo.</span>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -56,9 +62,12 @@ function draw(d) {
   if (!window.LightweightCharts) { msg.textContent = 'Could not load the chart library.'; return; }
   if (!d.bars.length) { msg.textContent = 'No 1h bars stored yet. Press "Reload history" on the status page.'; return; }
   msg.remove();
-  const bars = d.bars;
-  const times = bars.map((b) => b.time);
+  const VIEWS = { '1h': { bars: d.bars, step: 3600, show: 120 }, '3m': { bars: d.bars3 || [], step: 180, show: 200 } };
+  let view = '1h';
+  try { if (localStorage.getItem('autolevels.view') === '3m' || location.hash === '#3m') view = '3m'; } catch (e) {}
+  let bars = [], times = [], step = 3600;
   const el = document.getElementById('chart');
+  const note = document.getElementById('note');
   const chart = LightweightCharts.createChart(el, {
     autoSize: true,
     layout: { background: { color: '#ffffff' }, textColor: '#1d2330' },
@@ -73,27 +82,57 @@ function draw(d) {
   const series = chart.addCandlestickSeries({
     upColor: '#0a7d55', downColor: '#c0392b', borderVisible: false, wickUpColor: '#0a7d55', wickDownColor: '#c0392b',
   });
-  series.setData(bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
-  chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, bars.length - 120), to: bars.length + 4 });
+
+  function setView(v) {
+    view = v;
+    try { localStorage.setItem('autolevels.view', v); } catch (e) {}
+    const conf = VIEWS[v];
+    bars = conf.bars; step = conf.step; times = bars.map((b) => b.time);
+    document.getElementById('title').textContent = 'Chart · Germany 40, ' + v;
+    for (const b of document.querySelectorAll('.seg button')) b.classList.toggle('on', b.dataset.v === v);
+    note.textContent = bars.length ? '' : (v === '3m' ? '3-minute candles are being collected; they fill up from now on.' : 'No 1h candles yet. Press "Reload history" on the status page.');
+    series.setData(bars.map((b) => ({ time: b.time, open: b.open, high: b.high, low: b.low, close: b.close })));
+    const showLatest = () => {
+      if (!bars.length) return;
+      const n = Math.min(conf.show, Math.max(30, Math.round(el.clientWidth / 6))); // fewer candles on narrow screens
+      chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, bars.length - n), to: bars.length + 4 });
+    };
+    showLatest();
+    setTimeout(showLatest, 150); // again once the page has its final size (phones)
+    setMarkers();
+    schedule();
+  }
+  for (const b of document.querySelectorAll('.seg button')) b.addEventListener('click', () => setView(b.dataset.v));
 
   // bar index for a time (fractional inside a bar, extrapolated past the ends)
   function logical(t) {
+    if (!times.length) return 0;
     let lo = 0, hi = times.length - 1;
-    if (t < times[0]) return (t - times[0]) / 3600;
+    if (t < times[0]) return (t - times[0]) / step;
     while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (times[mid] <= t) lo = mid; else hi = mid - 1; }
     const next = times[lo + 1];
-    const span = next ? Math.min(3600, next - times[lo]) : 3600;
+    const span = next ? Math.min(step, next - times[lo]) : step;
     return lo + Math.min(next ? 1 : Infinity, (t - times[lo]) / span);
   }
-  // the 1h candle a time belongs to (times in the hour that has not closed yet go on the newest candle)
   const barTime = (t) => times[Math.min(times.length - 1, Math.max(0, Math.floor(logical(t))))];
-  const X = (t) => chart.timeScale().logicalToCoordinate(logical(t));
+  // x pixel for a time; the library only converts whole bar indexes, so interpolate between them
+  const X = (t) => {
+    const L = logical(t);
+    if (!Number.isFinite(L)) return null;
+    const i = Math.floor(L);
+    const ts = chart.timeScale();
+    const c0 = ts.logicalToCoordinate(i);
+    if (L === i || c0 == null) return c0;
+    const c1 = ts.logicalToCoordinate(i + 1);
+    return c1 == null ? c0 : c0 + (c1 - c0) * (L - i);
+  };
   const Y = (p) => series.priceToCoordinate(p);
 
   const ui = { dead: document.getElementById('dead'), paper: document.getElementById('paper'), bias: document.getElementById('bias') };
 
   function setMarkers() {
     const m = [];
+    if (!times.length) { try { series.setMarkers([]); } catch (e) {} return; }
     if (ui.bias.checked) for (const b of d.bias) m.push({
       time: barTime(b.time), position: 'aboveBar', shape: 'circle', size: 0.6,
       color: b.to === 'bullish' ? '#0a7d55' : b.to === 'bearish' ? '#c0392b' : '#8a93a5',
@@ -128,7 +167,6 @@ function draw(d) {
 
   const canvas = document.getElementById('overlay');
   const ctx = canvas.getContext('2d');
-  const lastBarEnd = times[times.length - 1] + 3600;
 
   function paint() {
     try {
@@ -139,6 +177,8 @@ function draw(d) {
   }
 
   function paintInner() {
+    if (!times.length) { ctx.clearRect(0, 0, canvas.width, canvas.height); return; }
+    const lastBarEnd = times[times.length - 1] + step;
     const dpr = window.devicePixelRatio || 1;
     const w = el.clientWidth, h = el.clientHeight;
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
@@ -201,6 +241,27 @@ function draw(d) {
         ctx.fillText(label, Math.min(Math.max(x1, 2), plotW - 90) + 3, (y1 ?? yo1) - 3);
       }
     }
+    // open positions: entry, stop and target lines from the entry time to the right edge
+    const posLines = (p, real) => {
+      const x1 = Math.max(0, X(p.time) ?? 0);
+      const lines = [
+        [p.entry, '#2457c5', [], (real ? 'REAL ' : 'paper ') + 'entry'],
+        [p.stop, '#c0392b', [6, 4], 'stop'],
+        [p.target, '#0a7d55', [6, 4], 'target'],
+      ];
+      for (const [price, col, dash, label] of lines) {
+        if (price == null) continue;
+        const y = Y(price); if (y == null || y < 0 || y > plotH) continue;
+        ctx.strokeStyle = col; ctx.lineWidth = real ? 1.8 : 1.2; ctx.setLineDash(dash);
+        ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(plotW, y); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = col; ctx.font = (real ? 'bold ' : '') + '11px system-ui';
+        const txt = label + ' ' + price.toFixed(1);
+        ctx.fillText(txt, plotW - ctx.measureText(txt).width - 6, y - 3);
+      }
+    };
+    if (d.live) posLines({ time: d.live.openedAt, entry: d.live.entry, stop: d.live.stopLevel, target: d.live.limitLevel }, true);
+    else if (d.paper && ui.paper.checked) posLines({ time: d.paper.time, entry: d.paper.price, stop: d.paper.stop, target: d.paper.target }, false);
+
     ctx.restore();
   }
 
@@ -218,6 +279,7 @@ function draw(d) {
   chart.subscribeCrosshairMove(schedule);
   for (const ev of ['pointermove', 'pointerup', 'wheel', 'touchmove', 'touchend']) el.addEventListener(ev, schedule, { passive: true });
   window.addEventListener('resize', schedule);
+  setView(view);
   setTimeout(paint, 0);
   setTimeout(paint, 300);
 }

@@ -51,6 +51,8 @@ export interface AgentData {
   // ---- chart history ----
   /** recent closed 1h bars (oldest first) */
   hourBars: Bar[];
+  /** recent closed 3m bars for the chart's 3m view (oldest first) */
+  m3Bars: Bar[];
   /** every zone seen in the chart window, latest state, by creation */
   zoneLog: Zone[];
   mondays: { date: string; high: number; low: number; mid: number; from: number }[];
@@ -58,6 +60,7 @@ export interface AgentData {
 }
 
 const CHART_HOURS = 600;
+const CHART_3M = 1500;
 
 export function emptyData(): AgentData {
   return {
@@ -81,6 +84,7 @@ export function emptyData(): AgentData {
     liveTrades: [],
     foreign: null,
     hourBars: [],
+    m3Bars: [],
     zoneLog: [],
     mondays: [],
     biasLog: [],
@@ -153,6 +157,7 @@ export class Runner {
       foreign: d0.foreign,
       account: d0.account,
       dayStart: d0.dayStart,
+      m3Bars: d0.m3Bars, // not re-fetched: keep what we have
     };
     Object.assign(this.data, emptyData(), keep);
     const hours = (await this.ig.latestBars(this.opt.priceEpic, 'HOUR', this.opt.warmupHours)).filter((b) => b.time + HOUR <= now);
@@ -250,6 +255,8 @@ export class Runner {
         }
       }
       d.last3m = bar.time;
+      d.m3Bars.push(bar);
+      if (d.m3Bars.length > CHART_3M) d.m3Bars.splice(0, d.m3Bars.length - CHART_3M);
     }
     feedHours(Number.POSITIVE_INFINITY);
     this.syncZones();
@@ -307,6 +314,8 @@ export class Runner {
     return {
       tz: this.cfg.tz,
       bars: d.hourBars,
+      bars3: d.m3Bars,
+      paper: d.paper,
       zones: d.zoneLog.map((z) => {
         const open = z.alive && !z.traded && !z.diedAt && !z.expiredAt;
         return {

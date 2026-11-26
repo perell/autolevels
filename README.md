@@ -89,7 +89,8 @@ backtester; it shows the cost first.
 
 ### Chart
 
-**Chart** on the status page: 1h candles (last ~4 weeks, stored by the agent, no extra IG data
+**Chart** on the status page, switchable between **1h and 3m** (the 3m view shows the last ~3–4 trading days,
+collected as the agent runs; open positions get entry, stop and target lines): 1h candles (last ~4 weeks, stored by the agent, no extra IG data
 points) with the zones the agent found (green buy / red sell boxes with their current score; dashed
 outline = original size, filled part = still unfilled; blue border = traded), Monday high/low/mid lines
 per week, bias changes, paper trades and real trades. Tick "filled / expired zones" to see zones that
