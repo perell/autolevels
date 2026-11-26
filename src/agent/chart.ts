@@ -114,7 +114,7 @@ function draw(d) {
     const span = next ? Math.min(step, next - times[lo]) : step;
     return lo + Math.min(next ? 1 : Infinity, (t - times[lo]) / span);
   }
-  const barTime = (t) => times[Math.min(times.length - 1, Math.max(0, Math.floor(logical(t))))];
+  const barTime = (t) => (t < times[0] ? null : times[Math.min(times.length - 1, Math.max(0, Math.floor(logical(t))))]);
   // x pixel for a time; the library only converts whole bar indexes, so interpolate between them
   const X = (t) => {
     const L = logical(t);
@@ -151,9 +151,10 @@ function draw(d) {
     if (ui.paper.checked) trades(d.paperTrades, false);
     trades(d.liveTrades, true);
     if (d.live) m.push({ time: barTime(d.live.openedAt), position: d.live.side === 'buy' ? 'belowBar' : 'aboveBar', shape: d.live.side === 'buy' ? 'arrowUp' : 'arrowDown', color: '#2457c5', text: 'REAL open' });
-    m.sort((a, b) => a.time - b.time);
+    // markers from before the first candle in this view are left out (they used to pile up on it)
+    const shown = m.filter((x) => x.time != null).sort((a, b) => a.time - b.time);
     try {
-      series.setMarkers(m.filter((x) => x.time != null));
+      series.setMarkers(shown);
     } catch (e) {
       console.error('markers', e);
     }
