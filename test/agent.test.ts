@@ -300,8 +300,23 @@ describe('agent against a fake IG', () => {
     expect(chart.mondays.map((m) => [m.date, m.high, m.low])).toEqual(bt.mondays.slice(-8).map((m) => [m.date, m.high, m.low]));
     expect(chart.zones.some((z) => z.score != null)).toBe(true);
     // 3m view: every 3m bar the agent read (after the warm-up), newest last, at most 1500
-    const read3 = m3.filter((b) => b.time > startAfter && b.time + 180 <= last);
-    expect(chart.bars3).toEqual(read3.slice(-1500));
+    const read3 = m3.filter((b) => b.time + 180 <= last);
+    const fromWarmup = m3.filter((b) => b.time <= startAfter).slice(-60);
+    expect(chart.bars3).toEqual([...fromWarmup, ...read3.filter((b) => b.time > startAfter)].slice(-1500));
+  });
+
+  it('Reload history fetches the last 3 hours of 3m candles once, without duplicates', async () => {
+    const ig = fakeIg(m3, h1);
+    const data = emptyData();
+    const now = Date.UTC(2026, 8, 29, 11, 0, 8) / 1000;
+    ig.clock.now = now;
+    const r = new Runner(data, ig.client(data), opts);
+    await r.tick(now); // first warm-up
+    const closed = m3.filter((b) => b.time + 180 <= now);
+    expect(data.m3Bars).toEqual(closed.slice(-60));
+    await r.warmup(now + 60); // Reload history again
+    expect(data.m3Bars).toEqual(closed.slice(-60));
+    expect(new Set(data.m3Bars.map((b) => b.time)).size).toBe(60);
   });
 
   it('logs in again when the session token expires', async () => {

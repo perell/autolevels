@@ -61,6 +61,8 @@ export interface AgentData {
 
 const CHART_HOURS = 600;
 const CHART_3M = 1500;
+/** 3m candles fetched on Reload history when missing: the last 3 hours */
+const BACKFILL_3M = 60;
 
 export function emptyData(): AgentData {
   return {
@@ -164,7 +166,15 @@ export class Runner {
     if (!hours.length) throw new Error(`No 1h prices for ${this.opt.priceEpic}. Check PRICE_EPIC (use the market finder).`);
     for (const b of hours) this.onHour(b, true);
     this.syncZones();
-    const m3 = (await this.ig.latestBars(this.opt.priceEpic, 'MINUTE_3', 2)).filter((b) => b.time + M3 <= now);
+    // the 3m view: if the last 3 hours of 3m candles are not stored, fetch them (60 data points)
+    const have = new Set(this.data.m3Bars.map((b) => b.time));
+    const recent = (await this.ig.latestBars(this.opt.priceEpic, 'MINUTE_3', BACKFILL_3M + 1)).filter((b) => b.time + M3 <= now);
+    const fresh = recent.slice(-BACKFILL_3M).filter((b) => !have.has(b.time));
+    if (fresh.length) {
+      const all = [...this.data.m3Bars, ...fresh].sort((a, b) => a.time - b.time);
+      this.data.m3Bars = all.slice(-CHART_3M);
+    }
+    const m3 = recent;
     this.data.last3m = m3.length ? m3[m3.length - 1].time : Math.floor(now / M3) * M3 - M3;
     this.data.initialized = true;
     this.data.allowance = this.ig.lastAllowance;
