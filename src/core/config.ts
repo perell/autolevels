@@ -12,6 +12,8 @@ export interface Config {
   strongBodyAtr: number;
   /** ... or it is part of this many candles in a row in the same direction */
   strongRunLength: number;
+  /** gap zones only when all three candles go the same way (gap at the middle one) */
+  gapNeedsThreeSameColour: boolean;
   /** only zones created within this many trading days */
   reachDays: number;
   /** only zones whose nearest edge is within this many points of price */
@@ -84,6 +86,7 @@ export const defaultConfig: Config = {
   atrPeriod: 14,
   strongBodyAtr: 1.5,
   strongRunLength: 3,
+  gapNeedsThreeSameColour: true,
   reachDays: 10,
   reachPoints: 300,
   maxZoneWidth: 0,

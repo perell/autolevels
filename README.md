@@ -113,9 +113,8 @@ identical trades from the same prices).
 
 | Area | Rule |
 | --- | --- |
-| Zone (gap) | 3-candle gap on 1h (candle 1 and 3 do not overlap) |
+| Zone (gap) | 3-candle gap on 1h (candle 1 and 3 do not overlap); all three candles the same colour, gap at the middle one (`gapNeedsThreeSameColour`) |
 | Zone (order block) | body (no wicks) of a candle followed by a candle the other way (`orderBlockRun` = 1; can be raised) |
-| Strong move | middle candle body >= 1.5 x ATR(14), or part of 3+ candles in a row the same way |
 | Valid | a zone stays valid until a 1h candle CLOSES beyond it (wicks don't count) and keeps its full size (`zoneDiesOnClose`, `shrinkZones`) |
 | Reach | created within the last 10 trading days (and within 300 pts, for listing) |
 | Monday | high / low / mid, available once Monday has closed |

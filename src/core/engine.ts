@@ -123,6 +123,8 @@ export function onHourClose(state: EngineState, bar: Bar, cfg: Config): HourEven
     const c3 = state.recent[n - 1];
     const strong = (want: number) => {
       if (dir(c2.bar) !== want) return false;
+      // gap = the middle of three candles going the same way
+      if (cfg.gapNeedsThreeSameColour) return dir(c1.bar) === want && dir(c3.bar) === want;
       const body = Math.abs(c2.bar.close - c2.bar.open);
       const bodyOk = c2.atr != null && body >= cfg.strongBodyAtr * c2.atr;
       const runThroughC2 = dir(c3.bar) === want ? c3.run : c2.run;

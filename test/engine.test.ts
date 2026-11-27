@@ -66,15 +66,30 @@ describe('zones on the 1h chart', () => {
     expect(ev.created.filter((z) => z.kind === 'gap')).toHaveLength(0);
   });
 
-  it('accepts a big-body middle candle even without a run of 3', () => {
+  it('no gap zone from a green candle between two red ones (needs three the same colour)', () => {
     const s = createState();
-    // build ATR: 14 quiet bars of range 10
     for (let i = 0; i < 14; i++) onHourClose(s, bar(MON + i * H, 100, 105, 95, i % 2 ? 101 : 99), cfg);
     const t = MON + 14 * H;
-    onHourClose(s, bar(t, 101, 104, 96, 97), cfg); // down
-    onHourClose(s, bar(t + H, 97, 130, 96, 128), cfg); // body 31 >= 1.5 x ATR (~10-12)
-    const ev = onHourClose(s, bar(t + 2 * H, 128, 135, 110, 127), cfg); // down candle, gap 104 -> 110
-    expect(ev.created[0]).toMatchObject({ side: 'buy', low: 104, high: 110 });
+    onHourClose(s, bar(t, 101, 104, 96, 97), cfg); // red
+    onHourClose(s, bar(t + H, 97, 130, 96, 128), cfg); // big green
+    const ev = onHourClose(s, bar(t + 2 * H, 128, 135, 110, 127), cfg); // red; gap 104 -> 110
+    expect(ev.created.filter((z) => z.kind === 'gap')).toHaveLength(0);
+    // with the setting off, the old rule (big middle candle) still finds it
+    const old = createState();
+    const off = withConfig({ gapNeedsThreeSameColour: false });
+    for (let i = 0; i < 14; i++) onHourClose(old, bar(MON + i * H, 100, 105, 95, i % 2 ? 101 : 99), off);
+    onHourClose(old, bar(t, 101, 104, 96, 97), off);
+    onHourClose(old, bar(t + H, 97, 130, 96, 128), off);
+    const ev2 = onHourClose(old, bar(t + 2 * H, 128, 135, 110, 127), off);
+    expect(ev2.created.find((z) => z.kind === 'gap')).toMatchObject({ side: 'buy', low: 104, high: 110 });
+  });
+
+  it('gap zone when all three candles are green (gap at the middle one)', () => {
+    const s = createState();
+    onHourClose(s, bar(MON, 100, 112, 99, 110), cfg);
+    onHourClose(s, bar(MON + H, 110, 131, 109, 130), cfg);
+    const ev = onHourClose(s, bar(MON + 2 * H, 130, 141, 120, 140), cfg);
+    expect(ev.created.find((z) => z.kind === 'gap')).toMatchObject({ side: 'buy', low: 112, high: 120 });
   });
 
   it('order block: body of a down candle followed by an up candle = buy zone (no wicks)', () => {
