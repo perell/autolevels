@@ -12,7 +12,7 @@ import { scoreZone } from '../core/scoring';
 import { local } from '../core/time';
 import type { Bar, EngineState, Signal, Zone } from '../core/types';
 import type { IgAllowance, IgClient, IgTokens, Resolution } from '../ig/client';
-import { Trader, type LivePosition, type LiveTrade, type TradeSettings } from './trader';
+import { targetText, Trader, type LivePosition, type LiveTrade, type TradeSettings } from './trader';
 
 const M3 = 180;
 const HOUR = 3600;
@@ -254,7 +254,7 @@ export class Runner {
           d.paper = s;
           d.signals.push(s);
           if (d.signals.length > 300) d.signals.splice(0, d.signals.length - 300);
-          this.log('info', `SIGNAL ${s.side.toUpperCase()} ${s.trigger} at ${s.price.toFixed(1)}, stop ${s.stop.toFixed(1)}, target ${s.target.toFixed(1)}, score ${s.score}`, closeTime);
+          this.log('info', `SIGNAL ${s.side.toUpperCase()} ${s.trigger} at ${s.price.toFixed(1)}, stop ${s.stop.toFixed(1)}, target ${s.target.toFixed(1)} (${targetText(s.targetFrom)}), score ${s.score}`, closeTime);
           if (this.trader && d.trading && reconciled) {
             try {
               await this.trader.open(s, now);

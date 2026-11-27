@@ -18,6 +18,8 @@ export interface Trade {
   entry: number;
   stop: number;
   target: number;
+  /** opposing zone id the target came from, or 'ratio' */
+  targetFrom?: string;
   exitTime: number;
   exit: number;
   exitReason: ExitReason;
@@ -54,6 +56,7 @@ export function closeTrade(pos: Signal, time: number, price: number, reason: Exi
     entry: pos.price,
     stop: pos.stop,
     target: pos.target,
+    targetFrom: pos.targetFrom,
     exitTime: time,
     exit: price,
     exitReason: reason,

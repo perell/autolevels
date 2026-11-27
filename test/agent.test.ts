@@ -476,7 +476,8 @@ describe('real trading against a fake IG that executes orders', () => {
     for (const o of ig.orders) {
       expect(o).toMatchObject({ epic: 'IX.D.DAX.IFD.IP', expiry: '-', size: 0.5, orderType: 'MARKET', currencyCode: 'EUR', forceOpen: true, guaranteedStop: true });
       expect(Number(o.stopDistance)).toBeGreaterThanOrEqual(30);
-      expect(Number(o.limitDistance)).toBe(3 * Number(o.stopDistance));
+      // target: before the next opposing zone (at least 1x the stop away) or the 3:1 fallback
+      expect(Number(o.limitDistance)).toBeGreaterThanOrEqual(Number(o.stopDistance) - 1);
       expect(String(o.dealReference)).toMatch(/^ALV[a-z0-9]{1,27}$/);
     }
     expect(ig.deal.maxOpen).toBe(1);
@@ -503,9 +504,10 @@ describe('real trading against a fake IG that executes orders', () => {
     }
     expect(data.liveTrades.filter((t) => t.reason === 'stop').length).toBeGreaterThan(0);
     expect(data.liveTrades.filter((t) => t.reason === 'target').length).toBeGreaterThan(0);
-    // stop/target exits recorded at the IG levels: a stop loses the stop distance, a target wins 3x
+    // stop/target exits recorded at the IG levels: a stop loses the stop distance, a target wins at least 1x it
     for (const t of data.liveTrades.filter((x) => x.reason === 'stop' || x.reason === 'target')) {
-      expect(Math.abs(t.points!)).toBeCloseTo(t.reason === 'stop' ? t.risk! : 3 * t.risk!, 5);
+      if (t.reason === 'stop') expect(t.points!).toBeCloseTo(-t.risk!, 5);
+      else expect(t.points!).toBeGreaterThanOrEqual(t.risk! - 1);
     }
     expect(data.log.filter((l) => l.level === 'error')).toEqual([]);
   });

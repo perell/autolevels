@@ -70,6 +70,8 @@ export interface Signal {
   stop: number;
   target: number;
   zoneId: string;
+  /** where the target came from: the opposing zone's id, or 'ratio' (rewardRisk x stop) */
+  targetFrom?: string;
   score: number;
   scoreParts: string[];
   /** 'touch' = bar touched the zone and did not close through it; 'reclaim' = closed back after closing through */

@@ -43,6 +43,8 @@ export interface LivePosition {
   zoneId: string;
   /** stop distance in points at entry */
   risk?: number;
+  /** where the target came from (opposing zone id, or 'ratio') */
+  targetFrom?: string;
   /** first stop/target touch seen in our 3m bars (used if IG closes the position) */
   hit?: { time: number; price: number; reason: 'stop' | 'target' };
   /** IG no longer lists the position; recorded once this run's bars are read */
@@ -259,10 +261,11 @@ export class Trader {
         openedAt: now,
         zoneId: sig.zoneId,
         risk: stopDistance,
+        targetFrom: sig.targetFrom,
       };
       this.log(
         'info',
-        `ORDER FILLED ${direction} ${this.s.size} at ${f1(d.live.entry)}, stop ${f1(c.stopLevel)}${this.s.guaranteedStop ? ' (guaranteed)' : ''}, target ${f1(c.limitLevel)}`,
+        `ORDER FILLED ${direction} ${this.s.size} at ${f1(d.live.entry)}, stop ${f1(c.stopLevel)}${this.s.guaranteedStop ? ' (guaranteed)' : ''}, target ${f1(c.limitLevel)} (${targetText(sig.targetFrom)})`,
         now,
       );
       return true;
@@ -348,4 +351,5 @@ function newRef(): string {
 }
 
 const f1 = (n: number | null | undefined) => (n == null ? '-' : n.toFixed(1));
+export const targetText = (from?: string) => (!from || from === 'ratio' ? 'ratio fallback' : `before zone ${from}`);
 export const fmtMoney = (n: number, currency: string) => `${n < 0 ? '-' : ''}${Math.abs(n).toFixed(2)} ${currency}`.trim();

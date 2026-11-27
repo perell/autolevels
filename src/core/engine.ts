@@ -327,13 +327,15 @@ export function onEntryBar(
         c.z.touchTraded = true;
         if (!cfg.reentryOnComeback) c.z.traded = true;
       } else c.z.traded = true;
+      const t = findTarget(state, c.z, long, bar.close, risk, cfg);
       out.push({
         kind: 'open',
         side: c.z.side,
         time: closeTime,
         price: bar.close,
         stop: long ? bar.close - risk : bar.close + risk,
-        target: long ? bar.close + risk * cfg.rewardRisk : bar.close - risk * cfg.rewardRisk,
+        target: t.target,
+        targetFrom: t.from,
         zoneId: c.z.id,
         score: c.score,
         scoreParts: c.parts,
@@ -346,6 +348,29 @@ export function onEntryBar(
     z.closedBeyond = false;
   }
   return out;
+}
+
+/**
+ * Take-profit level. With targetMode 'zone': a few points before the nearest valid opposing zone
+ * (sell zone above a buy, buy zone below a sell) that is at least targetMinRewardRisk x the stop away;
+ * closer zones are skipped. No such zone (or targetMode 'ratio'): rewardRisk x the stop.
+ */
+export function findTarget(state: EngineState, entryZone: Zone, long: boolean, price: number, risk: number, cfg: Config) {
+  const ratio = { target: long ? price + risk * cfg.rewardRisk : price - risk * cfg.rewardRisk, from: 'ratio' };
+  if (cfg.targetMode !== 'zone') return ratio;
+  const minDist = risk * cfg.targetMinRewardRisk;
+  let best: { target: number; from: string } | null = null;
+  for (const z of state.zones) {
+    if (!z.alive || z.id === entryZone.id) continue;
+    if (long && z.side === 'sell') {
+      const level = z.low - cfg.targetBeforeZone;
+      if (level - price >= minDist && (!best || level < best.target)) best = { target: level, from: z.id };
+    } else if (!long && z.side === 'buy') {
+      const level = z.high + cfg.targetBeforeZone;
+      if (price - level >= minDist && (!best || level > best.target)) best = { target: level, from: z.id };
+    }
+  }
+  return best ?? ratio;
 }
 
 /** First moment (unix s) a zone can be traded. */

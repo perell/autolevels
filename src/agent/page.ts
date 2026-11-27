@@ -1,5 +1,6 @@
 /** Small server-rendered pages for the agent: status and market finder. */
 import type { Runner } from './runner';
+import { targetText } from './trader';
 
 type Status = ReturnType<Runner['status']>;
 type Markets = Awaited<ReturnType<Runner['findMarkets']>>;
@@ -77,7 +78,7 @@ export function statusPage(s: Status, token: string): string {
 
   const pos = s.paper
     ? `<table><tr><th>Side</th><th>Entry</th><th>Stop</th><th>Target</th><th>Opened</th><th>Score</th><th>Trigger</th></tr>
-       <tr><td class="${s.paper.side}">${s.paper.side}</td><td>${f1(s.paper.price)}</td><td>${f1(s.paper.stop)}</td><td>${f1(s.paper.target)}</td>
+       <tr><td class="${s.paper.side}">${s.paper.side}</td><td>${f1(s.paper.price)}</td><td>${f1(s.paper.stop)}</td><td>${f1(s.paper.target)} <span class="muted">${esc(targetText(s.paper.targetFrom))}</span></td>
        <td>${fmt(s.paper.time)}</td><td>${s.paper.score} ${esc(s.paper.scoreParts.join(' '))}</td><td>${s.paper.trigger}</td></tr></table>`
     : '<p class="muted">No open paper position.</p>';
 
@@ -113,7 +114,7 @@ export function statusPage(s: Status, token: string): string {
             : `<form method="post" action="/api/trading?token=${t}"><input type="hidden" name="on" value="1">
                <input type="text" name="confirm" placeholder="type ON" style="width:80px"> <button>Turn real trading ON</button></form>`
         }</div>
-        <div class="muted">${esc(ts!.epic)} · size ${ts!.size} · stop ${s.rules.touchStopBeyondZone} pts beyond the zone (comeback: ${s.rules.comebackStopBeyondSweep} beyond the low/high, never under ${s.rules.stopPoints} from entry)${ts!.guaranteedStop ? ', guaranteed' : ''} · target ${s.rules.rewardRisk}× the stop ·
+        <div class="muted">${esc(ts!.epic)} · size ${ts!.size} · stop ${s.rules.touchStopBeyondZone} pts beyond the zone (comeback: ${s.rules.comebackStopBeyondSweep} beyond the low/high, never under ${s.rules.stopPoints} from entry)${ts!.guaranteedStop ? ', guaranteed' : ''} · target ${s.rules.targetMode === 'zone' ? `${s.rules.targetBeforeZone} pts before the next opposing zone at least ${s.rules.targetMinRewardRisk}× the stop away (else ${s.rules.rewardRisk}× the stop)` : `${s.rules.rewardRisk}× the stop`} ·
         max ${ts!.maxTradesPerDay} trades, ${ts!.maxDailyLossPoints} pts${ts!.maxDailyLossPercent > 0 ? ` or ${ts!.maxDailyLossPercent}% loss` : ''} per day</div>
         ${today ? `<div>Today: ${today.opened} trade(s), ${today.points >= 0 ? '+' : ''}${f1(today.points)} pts</div>` : ''}
         ${
@@ -128,7 +129,7 @@ export function statusPage(s: Status, token: string): string {
 
   const live = s.live
     ? `<table><tr><th>Side</th><th>Size</th><th>Entry</th><th>Stop</th><th>Target</th><th>Opened</th><th>Deal</th></tr>
-       <tr><td class="${s.live.side}">${s.live.side}</td><td>${s.live.size}</td><td>${f1(s.live.entry)}</td><td>${f1(s.live.stopLevel)}</td><td>${f1(s.live.limitLevel)}</td>
+       <tr><td class="${s.live.side}">${s.live.side}</td><td>${s.live.size}</td><td>${f1(s.live.entry)}</td><td>${f1(s.live.stopLevel)}</td><td>${f1(s.live.limitLevel)} <span class="muted">${esc(targetText(s.live.targetFrom))}</span></td>
        <td>${fmt(s.live.openedAt)}</td><td>${esc(s.live.dealId)}</td></tr></table>
        <div class="row">${action('/api/close-now', 'Close position now', token)}</div>`
     : '<p class="muted">No open position at IG.</p>';

@@ -355,6 +355,37 @@ describe('3-minute entries', () => {
     expect(onEntryBar(s, bar(mon10, 145, 146, 138, 141), { positionOpen: false }, cfg)).toHaveLength(1);
   });
 
+  it('target: 2 points before the nearest sell zone above that is at least 1x the stop away', () => {
+    const s = entryState(zone()); // buy zone 100-120; entry 121, stop 70 (51 points)
+    s.zones.push(
+      zone({ id: 'near', side: 'sell', low: 150, high: 160 }), // 29 points away: closer than 51, skipped
+      zone({ id: 'far', side: 'sell', low: 200, high: 210 }), // 79 points away: used
+      zone({ id: 'further', side: 'sell', low: 250, high: 260 }),
+      zone({ id: 'dead', side: 'sell', low: 180, high: 190, alive: false }),
+      zone({ id: 'buy-above', side: 'buy', low: 175, high: 185 }),
+    );
+    const [sig] = onEntryBar(s, bar(T10, 125, 126, 118, 121), { positionOpen: false }, cfg);
+    expect(sig).toMatchObject({ stop: 70, target: 198, targetFrom: 'far' });
+  });
+
+  it('target falls back to 3x the stop when no sell zone is far enough', () => {
+    const s = entryState(zone());
+    s.zones.push(zone({ id: 'near', side: 'sell', low: 150, high: 160 }));
+    const [sig] = onEntryBar(s, bar(T10, 125, 126, 118, 121), { positionOpen: false }, cfg);
+    expect(sig).toMatchObject({ target: 274, targetFrom: 'ratio' });
+  });
+
+  it('sell target: 2 points above the nearest buy zone below; ratio mode still available', () => {
+    const s = entryState(zone({ id: 'sell-x', side: 'sell', low: 290, high: 310 }), 'bearish');
+    s.zones.push(zone({ id: 'support', side: 'buy', low: 220, high: 230 }));
+    const [sig] = onEntryBar(s, bar(T10, 280, 295, 279, 293), { positionOpen: false }, cfg);
+    expect(sig).toMatchObject({ stop: 340, target: 232, targetFrom: 'support' }); // 61 away >= 47
+    const s2 = entryState(zone({ id: 'sell-x', side: 'sell', low: 290, high: 310 }), 'bearish');
+    s2.zones.push(zone({ id: 'support', side: 'buy', low: 220, high: 230 }));
+    const [sig2] = onEntryBar(s2, bar(T10, 280, 295, 279, 293), { positionOpen: false }, withConfig({ targetMode: 'ratio' }));
+    expect(sig2).toMatchObject({ target: 152, targetFrom: 'ratio' });
+  });
+
   it('sell zones mirror buy zones', () => {
     const s = entryState(zone({ id: 'sell-x', side: 'sell', low: 290, high: 310 }), 'bearish');
     const [sig] = onEntryBar(s, bar(T10, 280, 295, 279, 293), { positionOpen: false }, cfg);

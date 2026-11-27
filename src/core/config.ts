@@ -64,6 +64,13 @@ export interface Config {
   // Exits
   /** the stop is never closer than this many points to the entry */
   stopPoints: number;
+  /** target: 'zone' = just before the nearest opposing zone; 'ratio' = rewardRisk x the stop */
+  targetMode: 'zone' | 'ratio';
+  /** take profit this many points before the opposing zone's near edge */
+  targetBeforeZone: number;
+  /** opposing zones closer than this many times the stop are skipped (the next one is used) */
+  targetMinRewardRisk: number;
+  /** ratio target, and the fallback when no opposing zone is far enough */
   rewardRisk: number;
 
   // Backtest only
@@ -104,6 +111,9 @@ export const defaultConfig: Config = {
   oneAtATime: true,
 
   stopPoints: 30,
+  targetMode: 'zone',
+  targetBeforeZone: 2,
+  targetMinRewardRisk: 1,
   rewardRisk: 3,
 
   spreadPoints: 1.2,

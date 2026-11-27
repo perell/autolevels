@@ -124,7 +124,7 @@ identical trades from the same prices).
 | Waiting period | a new zone can be traded only after one full 1h candle has closed after it was found (`zoneWaitHours`); touches before that are ignored |
 | Entry | touch: a 3m bar touches the zone and does not close beyond it -> market at the close. Comeback: after price has been beyond the zone, a 3m close back -> entry (no time limit while the zone is valid). At most one touch and one comeback trade per zone |
 | Limits | one trade per zone, one position at a time, entries 09:00–17:00 (Berlin/Oslo time), no zone width limit (`maxZoneWidth` 0) |
-| Exit | touch: stop 30 pts beyond the zone; comeback: stop 10 pts beyond the furthest price outside the zone; never closer than 30 pts to entry; target 3x the stop; flat at 17:30 |
+| Exit | touch: stop 30 pts beyond the zone; comeback: stop 10 pts beyond the furthest price outside the zone; never closer than 30 pts to entry; target 2 pts before the nearest valid opposing zone that is at least 1x the stop away (closer ones skipped), else 3x the stop; set at entry, not moved; flat at 17:30 |
 | Backtest | stop+target in the same bar = stop; gaps fill at the open; 1.2 pts spread per trade |
 
 Every number is in `src/core/config.ts` and can be changed per run with `--set`.

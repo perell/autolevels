@@ -248,7 +248,7 @@ function draw(d) {
       const lines = [
         [p.entry, '#2457c5', [], (real ? 'REAL ' : 'paper ') + 'entry'],
         [p.stop, '#c0392b', [6, 4], 'stop'],
-        [p.target, '#0a7d55', [6, 4], 'target'],
+        [p.target, '#0a7d55', [6, 4], p.ratio ? 'target (3:1)' : 'target (zone)'],
       ];
       for (const [price, col, dash, label] of lines) {
         if (price == null) continue;
@@ -260,8 +260,8 @@ function draw(d) {
         ctx.fillText(txt, plotW - ctx.measureText(txt).width - 6, y - 3);
       }
     };
-    if (d.live) posLines({ time: d.live.openedAt, entry: d.live.entry, stop: d.live.stopLevel, target: d.live.limitLevel }, true);
-    else if (d.paper && ui.paper.checked) posLines({ time: d.paper.time, entry: d.paper.price, stop: d.paper.stop, target: d.paper.target }, false);
+    if (d.live) posLines({ time: d.live.openedAt, entry: d.live.entry, stop: d.live.stopLevel, target: d.live.limitLevel, ratio: !d.live.targetFrom || d.live.targetFrom === 'ratio' }, true);
+    else if (d.paper && ui.paper.checked) posLines({ time: d.paper.time, entry: d.paper.price, stop: d.paper.stop, target: d.paper.target, ratio: !d.paper.targetFrom || d.paper.targetFrom === 'ratio' }, false);
 
     ctx.restore();
   }
